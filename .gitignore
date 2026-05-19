@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.spec.bak
+
+# IDE / Tool configs (local-only)
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Bolo user state — never commit
+settings.json
+history.json
+.bolo.lock
+*.lock
+
+# Bolo runtime data
+/models/
+.bolo/
+
+# Logs
+*.log
+logs/
+
+# Bundled secrets (just in case)
+.env
+.env.local
+secrets.json
+credentials.json
+
+# PyInstaller temp
+*.toc
+*.pkg

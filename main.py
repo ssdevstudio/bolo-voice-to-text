@@ -1,0 +1,346 @@
+import sys
+import os
+import threading
+import time
+import traceback
+import atexit
+import argparse
+import logging
+
+if sys.platform == "win32":
+    try:
+        import codecs
+        sys.stdout.reconfigure(encoding='utf-8')
+    except:
+        pass
+
+from src import config
+from src.audio_engine import AudioEngine
+from src.injector import TextInjector
+from src.hotkey_monitor import HotkeyMonitor
+from src.tray_icon import TrayIcon
+from src.gui import start_gui
+from src.utils import setup_logging, get_logger
+from src.onboarding import maybe_show as maybe_show_onboarding
+
+# ─── Structured Logging Setup ───────────────────────────────────────────────
+_logger = None  # Set in __main__ after config is loaded
+
+# ─── Single Instance Lock ───────────────────────────────────────────────────
+global_args = None  # CLI arguments, set in __main__
+_LOCK_FILE = config._get_lock_path()  # APPDATA when frozen, project root in dev
+
+def _cleanup_temp_files():
+    """Clean up temporary files on exit."""
+    if os.path.exists(_LOCK_FILE):
+        try:
+            os.remove(_LOCK_FILE)
+            print(f"[Cleanup] Removed {_LOCK_FILE}")
+        except Exception as e:
+            print(f"[Cleanup] Could not remove {_LOCK_FILE}: {e}")
+
+# Register cleanup handler
+atexit.register(_cleanup_temp_files)
+
+def _kill_existing_instances():
+    """Kill prior Bolo instance via lock-file PID.
+
+    Lock file is created in user data dir and stores the PID of the running
+    instance. We trust the PID — no process-name scanning, which can match
+    unrelated programs and is racy.
+    """
+    import psutil
+    current_pid = os.getpid()
+
+    if not os.path.exists(_LOCK_FILE):
+        return
+    try:
+        with open(_LOCK_FILE, "r") as f:
+            old_pid = int(f.read().strip())
+    except Exception as e:
+        print(f"[SingleInstance] Lock file read error: {e}")
+        try:
+            os.remove(_LOCK_FILE)
+        except Exception:
+            pass
+        return
+
+    if old_pid == current_pid:
+        return
+
+    try:
+        proc = psutil.Process(old_pid)
+        # Verify it's actually a Bolo process before killing — prevents
+        # accidentally terminating an unrelated PID we don't own.
+        cmdline = " ".join(proc.cmdline())
+        if "Bolo" not in cmdline and "bolo" not in cmdline.lower():
+            print(f"[SingleInstance] Stale lock (PID {old_pid} is not Bolo). Removing.")
+        else:
+            print(f"[SingleInstance] Stopping prior instance PID {old_pid}...")
+            proc.terminate()
+            try:
+                proc.wait(timeout=4)
+            except psutil.TimeoutExpired:
+                proc.kill()
+            time.sleep(0.3)
+    except psutil.NoSuchProcess:
+        pass
+    except psutil.AccessDenied:
+        print(f"[SingleInstance] Cannot terminate PID {old_pid}: access denied.")
+    finally:
+        try:
+            os.remove(_LOCK_FILE)
+        except Exception:
+            pass
+
+def _write_lock():
+    """Write current PID to lock file."""
+    with open(_LOCK_FILE, "w") as f:
+        f.write(str(os.getpid()))
+
+def _remove_lock():
+    """Remove lock file on exit."""
+    try:
+        if os.path.exists(_LOCK_FILE):
+            os.remove(_LOCK_FILE)
+    except Exception:
+        pass
+# ────────────────────────────────────────────────────────────────────────────
+
+
+class BoloApp:
+    def __init__(self):
+        self.current_language = config.DEFAULT_LANGUAGE
+        self.audio_engine = AudioEngine()
+        self.injector = TextInjector()
+        self.gui = start_gui(self.on_settings_change, self.quit_app)
+        # Handle --minimized flag (set by Bolo.lnk for startup)
+        args = global_args  # Set by argparse in __main__
+        if args.minimized:
+            self.gui.withdraw()
+            print("[Main] Starting minimized to system tray")
+        self.tray = TrayIcon(self.quit_app, self.set_language)
+        self.tray.volume_provider = self.audio_engine
+        self.tray.on_show_gui = self.gui.show_window
+        self.tray.on_reconnect = self.audio_engine.reconnect_mic
+        # Pass target_hwnd to stop_recording
+        self.monitor = HotkeyMonitor(self.start_recording, self.stop_recording)
+        self._quitting = False
+        self._target_hwnd = None
+
+    def on_settings_change(self, key, value):
+        if key == 'language':
+            self.set_language(value)
+        elif key == 'hotkey':
+            self.monitor.update_key(value)
+        elif key == 'longpress':
+            self.monitor.threshold = float(value)
+            print(f"Long-press threshold: {int(value * 1000)}ms")
+        elif key == 'engine':
+            print(f"Engine changed to: {value}")
+        elif key == 'model':
+            print(f"Model changed to: {value}")
+            self.audio_engine.reload_whisper_model()
+        elif key == 'download_model':
+            def _do_download():
+                result = self.audio_engine.download_model_now(progress_cb=self.gui.on_download_progress)
+                self._schedule_gui(lambda r=result: self._on_download_complete(r))
+            threading.Thread(target=_do_download, daemon=True).start()
+        elif key == 'download_zero_stt':
+            def _do_zero():
+                result = self.audio_engine.download_zero_stt_now(progress_cb=self.gui.on_zero_stt_progress)
+                self._schedule_gui(lambda r=result: self.gui.on_zero_stt_complete(r))
+            threading.Thread(target=_do_zero, daemon=True).start()
+        elif key == 'auto_energy':
+            self.audio_engine.recognizer.dynamic_energy_threshold = value
+        elif key == 'pre_roll':
+            import collections
+            self.audio_engine.pre_roll_buffer = collections.deque(
+                maxlen=int(self.audio_engine.rate / self.audio_engine.chunk_size * value)
+            )
+
+    def _on_download_complete(self, success):
+        """Called from GUI thread when download completes."""
+        if hasattr(self.gui, '_is_downloading'):
+            self.gui._is_downloading = False
+        self.gui.refresh_download_button()
+        if success:
+            self.gui.status_lbl.configure(text="Model downloaded successfully!", text_color=config.SUCCESS_COLOR)
+            self.gui.after(3000, lambda: self.gui.status_lbl.configure(text="Ready to transcribe", text_color=config.TEXT_PRIMARY))
+        else:
+            self.gui.status_lbl.configure(text="Model download failed", text_color=config.ERROR_COLOR)
+            self.gui.after(3000, lambda: self.gui.status_lbl.configure(text="Ready to transcribe", text_color=config.TEXT_PRIMARY))
+
+    def set_language(self, lang_code):
+        print(f"Language changed to: {lang_code}")
+        self.current_language = lang_code
+        self.gui.update_ui_language(lang_code)
+        self.tray.update_language_state(lang_code)
+
+    def start_recording(self, target_hwnd=None):
+        if self.audio_engine.is_recording:
+            return
+        # Use HWND passed from hotkey_monitor (captured at KEY_DOWN, most accurate)
+        if target_hwnd:
+            self._target_hwnd = target_hwnd
+            print(f"Target window (from hotkey): {self._target_hwnd}")
+        else:
+            # Fallback: capture current focus if not provided by hotkey
+            try:
+                import ctypes
+                self._target_hwnd = ctypes.windll.user32.GetForegroundWindow()
+                print(f"Target window captured: {self._target_hwnd}")
+            except Exception:
+                self._target_hwnd = None
+        print("Recording started...")
+        self.audio_engine.start_recording()
+        if config.BEEP_ON_START:
+            threading.Thread(target=self.injector.play_beep, args=(1000, 100), daemon=True).start()
+        self._schedule_gui(lambda: self.gui.set_listening_state("listening"))
+        self._schedule_gui(lambda: self.tray.show_status("Listening...", "#e74c3c"))
+        self._schedule_gui(lambda: self.tray.set_icon_state(recording=True))
+
+    def stop_recording(self, target_hwnd=None):
+        if not self.audio_engine.is_recording:
+            return
+        if target_hwnd:
+            self._target_hwnd = target_hwnd
+        print(f"Recording stopped. Processing for window {self._target_hwnd}...")
+        self._schedule_gui(lambda: self.gui.set_listening_state("processing"))
+        self._schedule_gui(lambda: self.tray.hide_status())
+        self._schedule_gui(lambda: self.tray.set_icon_state(recording=False))
+        t = threading.Thread(target=self._process_and_inject)
+        t.daemon = True
+        t.start()
+
+    def _process_and_inject(self):
+        try:
+            text = self.audio_engine.stop_recording(language=self.current_language)
+            self._schedule_gui(lambda: self.gui.set_listening_state("idle"))
+            if text:
+                print(f"Transcription: {text}")
+                self.injector.inject(text, target_hwnd=self._target_hwnd)
+                if config.BEEP_ON_END:
+                    self.injector.play_beep(1200, 100)
+            else:
+                self._schedule_gui(lambda: self.tray.set_icon_state(recording=False))
+        except Exception as e:
+            # CRITICAL: Log full traceback for debugging
+            print(f"[ERROR] Processing error: {e}")
+            traceback.print_exc()
+            self._schedule_gui(lambda: self.gui.set_listening_state("idle"))
+            self._schedule_gui(lambda: self.tray.set_icon_state(recording=False))
+
+    def _schedule_gui(self, callback):
+        """Thread-safe GUI callback scheduler with error handling."""
+        try:
+            # Only schedule the callback if GUI is still active
+            if self.gui and hasattr(self.gui, 'winfo_exists') and self.gui.winfo_exists():
+                # Wrap callback to catch exceptions in the callback itself
+                def safe_callback():
+                    try:
+                        callback()
+                    except Exception as e:
+                        print(f"[GUI] Callback error: {e}")
+                        traceback.print_exc()
+                self.gui.after(0, safe_callback)
+            else:
+                print("[GUI] Warning: GUI not available for callback")
+        except Exception as e:
+            print(f"[GUI] Error scheduling callback: {e}")
+
+    def run(self):
+        print(f"{config.APP_NAME} starting...")
+        self.monitor.start()
+        tray_t = threading.Thread(target=self.tray.run, daemon=True)
+        tray_t.start()
+        # First-launch onboarding wizard (skipped on subsequent runs)
+        try:
+            self.gui.after(300, lambda: maybe_show_onboarding(self.gui, self.audio_engine))
+        except Exception as e:
+            print(f"[Main] Onboarding launch failed: {e}")
+        try:
+            self.gui.mainloop()
+        except KeyboardInterrupt:
+            print("Interrupted by user.")
+        finally:
+            if not self._quitting:
+                self.quit_app()
+
+    def quit_app(self):
+        if self._quitting:
+            return
+        self._quitting = True
+        print(f"{config.APP_NAME} shutting down...")
+        try:
+            self.monitor.stop()
+        except Exception as e:
+            print(f"Monitor shutdown error: {e}")
+        try:
+            # Signal audio engine to stop background listener and kill stream
+            self.audio_engine._stop_engine_event.set()  # Signal bg listener to stop
+            
+            # Wait for background listener thread to finish (with timeout)
+            if self.audio_engine._bg_listener_thread and self.audio_engine._bg_listener_thread.is_alive():
+                self.audio_engine._bg_listener_thread.join(timeout=2.0)
+                if self.audio_engine._bg_listener_thread.is_alive():
+                    print("[Audio] Background listener thread did not stop gracefully")
+            
+            # Now kill the stream
+            self.audio_engine.kill_stream()
+        except Exception as e:
+            print(f"Audio shutdown error: {e}")
+        try:
+            if self.tray.icon:
+                self.tray.icon.stop()
+        except Exception as e:
+            print(f"Tray shutdown error: {e}")
+        try:
+            self.gui.after(0, self.gui.quit)
+        except Exception as e:
+            print(f"GUI shutdown error: {e}")
+        sys.exit(0)
+
+    def show_window(self):
+        self.gui.show_window()
+
+
+if __name__ == "__main__":
+    # ─── CLI Argument Parsing ──────────────────────────────────────────────
+    parser = argparse.ArgumentParser(
+        prog="Bolo",
+        description="Voice-to-text desktop application with hotkey activation",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python main.py                Start Bolo normally
+  python main.py --minimized    Start minimized to system tray
+  python main.py --help         Show this help message
+        """
+    )
+    parser.add_argument(
+        "--minimized", "-m",
+        action="store_true",
+        help="Start minimized to system tray (useful for auto-startup)"
+    )
+    parser.add_argument(
+        "--version", "-v",
+        action="version",
+        version=f"%(prog)s {config.VERSION}"
+    )
+    global_args = parser.parse_args()
+
+    # ─── Initialize Structured Logging ─────────────────────────────────────
+    _logger = setup_logging(config.APP_NAME)
+    _logger.info(f"{config.APP_NAME} v{config.VERSION} starting...")
+
+    _kill_existing_instances()  # Purana band karo
+    _write_lock()               # Apna PID likho
+    try:
+        app = BoloApp()
+        app.run()
+    except Exception as e:
+        _logger.critical(f"Unexpected crash: {e}", exc_info=True)
+    finally:
+        _remove_lock()          # Exit pe lock hataao
+        _logger.info(f"{config.APP_NAME} shutdown complete")
