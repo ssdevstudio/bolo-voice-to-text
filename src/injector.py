@@ -5,6 +5,69 @@ import threading
 from . import config
 
 
+class _ClipboardBackup:
+    """Win32 full-format clipboard backup/restore.
+
+    Preserves ALL formats (text, images, files, rich text) — not just text
+    like pyperclip. Uses win32clipboard (pywin32) for safe format enumeration.
+    """
+
+    def __init__(self):
+        self._formats = []
+        self._data = {}
+
+    def save(self):
+        """Enumerate and capture all clipboard formats."""
+        try:
+            import win32clipboard as wc
+            wc.OpenClipboard()
+            try:
+                fmt = 0
+                while True:
+                    fmt = wc.EnumClipboardFormats(fmt)
+                    if fmt == 0:
+                        break
+                    try:
+                        raw = wc.GetClipboardData(fmt)
+                        if raw is not None:
+                            self._formats.append(fmt)
+                            self._data[fmt] = raw
+                    except Exception:
+                        pass
+            finally:
+                wc.CloseClipboard()
+        except Exception as e:
+            print(f"[Injector] Clipboard backup err: {e}")
+
+    def restore(self):
+        """Restore all captured formats if clipboard still contains our text."""
+        if not self._formats:
+            return
+        try:
+            import win32clipboard as wc
+            wc.OpenClipboard()
+            try:
+                # Only restore if we still own the clipboard (text matches)
+                try:
+                    txt = wc.GetClipboardData(1)  # CF_TEXT = 1
+                except Exception:
+                    txt = None
+                if txt is not None:
+                    # User hasn't changed clipboard — restore everything
+                    wc.EmptyClipboard()
+                    for fmt in self._formats:
+                        try:
+                            wc.SetClipboardData(fmt, self._data[fmt])
+                        except Exception:
+                            pass
+                else:
+                    print("[Injector] Skipped restore (user changed clipboard)")
+            finally:
+                wc.CloseClipboard()
+        except Exception as e:
+            print(f"[Injector] Clipboard restore err: {e}")
+
+
 class TextInjector:
     """
     Text injection engine for Bolo voice-to-text.
@@ -22,15 +85,6 @@ class TextInjector:
            - Copies text to clipboard, pastes via Ctrl+V, restores clipboard
         2. Direct Type: For short ASCII text
            - Uses keyboard.write() for reliability
-
-    Race Condition Fix (Phase 1):
-        - Original clipboard captured BEFORE modification (synchronous)
-        - Clipboard restored SYNCHRONOUSLY (not with delay)
-        - Duplicate detection: only restore if we own the clipboard
-
-    Thread Safety:
-        - All methods are static (no shared state)
-        - pyperclip operations are atomic
     """
 
     @staticmethod
@@ -70,14 +124,12 @@ class TextInjector:
         try:
             import pyperclip
             import keyboard
-            
+
             if use_paste:
-                # PASTE STRATEGY - SYNCHRONOUS BACKUP WITH DUPLICATE DETECTION
-                # CRITICAL: Capture original clipboard BEFORE ANY modification
-                try:
-                    orig_clipboard = pyperclip.paste()
-                except:
-                    orig_clipboard = None  # If paste fails, don't restore
+                # PASTE STRATEGY — FULL-FORMAT BACKUP
+                # Save ALL clipboard formats (text, images, files) before modifying
+                backup = _ClipboardBackup()
+                backup.save()
 
                 # Modify clipboard and inject
                 pyperclip.copy(text)
@@ -85,26 +137,8 @@ class TextInjector:
                 keyboard.press_and_release('ctrl+v')
                 time.sleep(0.2) # Let paste operation complete
 
-                # Check if clipboard content matches what we injected
-                # If user already copied something else, skip restoration
-                try:
-                    current_clipboard = pyperclip.paste()
-                    clipboard_changed_by_us = (current_clipboard == text)
-                except:
-                    current_clipboard = None
-                    clipboard_changed_by_us = True
-
-                # Synchronous restoration - only if we own the clipboard
-                if orig_clipboard is not None and clipboard_changed_by_us:
-                    try:
-                        pyperclip.copy(orig_clipboard)
-                        print(f"[Injector] Clipboard restored (length: {len(orig_clipboard)})")
-                    except Exception as e:
-                        print(f"[Injector] Warning: Failed to restore clipboard: {e}")
-                elif orig_clipboard is None:
-                    print("[Injector] Skipped clipboard restoration (original not captured)")
-                else:
-                    print("[Injector] Skipped clipboard restoration (user changed clipboard)")
+                # Restore original clipboard (only if we still own it)
+                backup.restore()
             else:
                 # DIRECT TYPE STRATEGY
                 keyboard.write(text, delay=0.01)
@@ -114,7 +148,7 @@ class TextInjector:
             try:
                 import keyboard
                 keyboard.write(text, delay=0.02)
-            except:
+            except Exception:
                 pass
 
     @staticmethod

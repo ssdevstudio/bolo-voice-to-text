@@ -55,7 +55,7 @@ class HotkeyMonitor:
             if self._timer:
                 try:
                     self._timer.cancel()
-                except:
+                except Exception:
                     pass
                 self._timer = None
         return True
@@ -84,7 +84,7 @@ class HotkeyMonitor:
         import ctypes
         try:
             return ctypes.windll.user32.GetForegroundWindow()
-        except:
+        except Exception:
             return None
 
     def _on_event(self, event):
@@ -131,5 +131,5 @@ class HotkeyMonitor:
             if self._hook_id is not None:
                 keyboard.unhook(self._hook_id)
                 self._hook_id = None
-        except:
+        except Exception:
             pass

@@ -76,7 +76,7 @@ class TrayIcon:
     def _on_exit_clicked(self, icon, item):
         try:
             self.icon.stop()
-        except:
+        except Exception:
             pass
         try:
             self.on_exit()
@@ -155,7 +155,7 @@ class TrayIcon:
             if self._tk_root:
                 try:
                     self._tk_root.after(30, self._update_waveform)
-                except:
+                except RuntimeError:
                     pass
 
     def show_status(self, text, color=None):
@@ -183,6 +183,6 @@ class TrayIcon:
                     if self.icon:
                         try:
                             self.icon.menu = self._setup_menu()
-                        except:
+                        except Exception:
                             pass
                     break

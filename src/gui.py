@@ -160,7 +160,7 @@ class HistoryCard(ctk.CTkFrame):
             pyperclip.copy(self.text)
             self.copy_btn.configure(text="Copied!", text_color=ACC, fg_color="#201012")
             self.after(1500, lambda: self.copy_btn.configure(text="Copy", text_color=TXT, fg_color=CRD2))
-        except:
+        except Exception:
             pass
 
 
@@ -174,7 +174,7 @@ class BildGUI(ctk.CTk):
         ctk.set_appearance_mode("dark")
         self.configure(fg_color=BG)
         try: self.iconbitmap(create_default_icon())
-        except: pass
+        except OSError: pass
 
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -261,7 +261,7 @@ class BildGUI(ctk.CTk):
         try:
             views = [self.dash_v, self.hist_v, self.sett_v]
             views[self._active_idx].lift()
-        except: pass
+        except OSError: pass
 
     def _show_dash(self):
         # Refresh dynamic dashboard labels (hotkey may have changed elsewhere)
@@ -662,7 +662,7 @@ class BildGUI(ctk.CTk):
             else:
                 self.download_btn.configure(text="Download", state="normal",
                     fg_color=ACC, text_color="white")
-        except: pass
+        except OSError: pass
 
     def toggle_startup(self):
         v = self.startup_switch.get()

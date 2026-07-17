@@ -11,7 +11,7 @@ if sys.platform == "win32":
     try:
         import codecs
         sys.stdout.reconfigure(encoding='utf-8')
-    except:
+    except Exception:
         pass
 
 from src import config
@@ -126,7 +126,7 @@ class BoloApp:
         # Pass target_hwnd to stop_recording
         self.monitor = HotkeyMonitor(self.start_recording, self.stop_recording)
         self._quitting = False
-        self._target_hwnd = None
+        self._pending_hwnd = None
 
     def on_settings_change(self, key, value):
         if key == 'language':
@@ -180,18 +180,15 @@ class BoloApp:
     def start_recording(self, target_hwnd=None):
         if self.audio_engine.is_recording:
             return
-        # Use HWND passed from hotkey_monitor (captured at KEY_DOWN, most accurate)
-        if target_hwnd:
-            self._target_hwnd = target_hwnd
-            print(f"Target window (from hotkey): {self._target_hwnd}")
-        else:
-            # Fallback: capture current focus if not provided by hotkey
+        # Capture target HWND once at KEY_DOWN (most accurate moment)
+        hwnd = target_hwnd
+        if not hwnd:
             try:
                 import ctypes
-                self._target_hwnd = ctypes.windll.user32.GetForegroundWindow()
-                print(f"Target window captured: {self._target_hwnd}")
+                hwnd = ctypes.windll.user32.GetForegroundWindow()
             except Exception:
-                self._target_hwnd = None
+                pass
+        print(f"Target window: {hwnd}")
         print("Recording started...")
         self.audio_engine.start_recording()
         if config.BEEP_ON_START:
@@ -199,27 +196,29 @@ class BoloApp:
         self._schedule_gui(lambda: self.gui.set_listening_state("listening"))
         self._schedule_gui(lambda: self.tray.show_status("Listening...", "#e74c3c"))
         self._schedule_gui(lambda: self.tray.set_icon_state(recording=True))
+        # Store hwnd for _process_and_inject thread (captured once, no race)
+        self._pending_hwnd = hwnd
 
     def stop_recording(self, target_hwnd=None):
         if not self.audio_engine.is_recording:
             return
-        if target_hwnd:
-            self._target_hwnd = target_hwnd
-        print(f"Recording stopped. Processing for window {self._target_hwnd}...")
+        hwnd = self._pending_hwnd
+        self._pending_hwnd = None
+        print(f"Recording stopped. Processing for window {hwnd}...")
         self._schedule_gui(lambda: self.gui.set_listening_state("processing"))
         self._schedule_gui(lambda: self.tray.hide_status())
         self._schedule_gui(lambda: self.tray.set_icon_state(recording=False))
-        t = threading.Thread(target=self._process_and_inject)
+        t = threading.Thread(target=self._process_and_inject, args=(hwnd,))
         t.daemon = True
         t.start()
 
-    def _process_and_inject(self):
+    def _process_and_inject(self, hwnd):
         try:
             text = self.audio_engine.stop_recording(language=self.current_language)
             self._schedule_gui(lambda: self.gui.set_listening_state("idle"))
             if text:
                 print(f"Transcription: {text}")
-                self.injector.inject(text, target_hwnd=self._target_hwnd)
+                self.injector.inject(text, target_hwnd=hwnd)
                 if config.BEEP_ON_END:
                     self.injector.play_beep(1200, 100)
             else:
@@ -259,6 +258,11 @@ class BoloApp:
             self.gui.after(300, lambda: maybe_show_onboarding(self.gui, self.audio_engine))
         except Exception as e:
             print(f"[Main] Onboarding launch failed: {e}")
+        # Background prewarm: silently load local model so first transcription is instant
+        try:
+            self.gui.after(1000, self._prewarm_model)
+        except Exception as e:
+            print(f"[Main] Prewarm schedule failed: {e}")
         try:
             self.gui.mainloop()
         except KeyboardInterrupt:
@@ -303,6 +307,42 @@ class BoloApp:
 
     def show_window(self):
         self.gui.show_window()
+
+    def _prewarm_model(self):
+        """Prewarm local model in background (downloaded models only)."""
+        import threading
+        def _warm():
+            if self._quitting:
+                return
+            engine = config.TRANSCRIPTION_ENGINE
+            is_hinglish = self.current_language == 'xx-HI'
+
+            if engine != 'whisper' and engine != 'google':
+                return
+
+            # For Hinglish: prewarm Zero-STT if available, otherwise Whisper fallback
+            if is_hinglish:
+                if engine == 'whisper':
+                    from src.audio_engine import is_zero_stt_downloaded, is_whisper_model_downloaded
+                    if is_zero_stt_downloaded():
+                        print("[Prewarm] Background: load zero-stt...")
+                        self.audio_engine._get_zero_stt_model()
+                    elif is_whisper_model_downloaded(config.WHISPER_MODEL):
+                        print("[Prewarm] Background: load Whisper...")
+                        self.audio_engine._get_whisper_model()
+                    else:
+                        print("[Prewarm] No local model found, skipping.")
+                        return
+                    print("[Prewarm] Model ready.")
+            elif engine == 'whisper':
+                from src.audio_engine import is_whisper_model_downloaded
+                if is_whisper_model_downloaded(config.WHISPER_MODEL):
+                    print("[Prewarm] Background: load Whisper...")
+                    self.audio_engine._get_whisper_model()
+                else:
+                    print("[Prewarm] No local Whisper model, skipping.")
+
+        threading.Thread(target=_warm, daemon=True).start()
 
 
 if __name__ == "__main__":

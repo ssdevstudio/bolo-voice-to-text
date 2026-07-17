@@ -5,417 +5,76 @@ import json
 import os
 import re
 import pyaudio
-import math
-import struct
 import numpy as np
 import collections
-import transformers
 from indic_transliteration import sanscript
 from indic_transliteration.sanscript import transliterate
 from . import config
 
-# ─── Hinglish Polishing Pipeline ────────────────────────────────────────────
-# Word-level fixes preferred over regex (no English-word collateral damage).
-# Regex used only for genuine multi-character patterns (suffixes, nasals,
-# hallucination artifacts).
+# ─── Hinglish Data: loaded from external JSON ────────────────────────────
+# Data file is co-located with this module.
+_HINGLISH_DATA_PATH = os.path.join(os.path.dirname(__file__), "hinglish_data.json")
 
-# Whisper / Zero-STT prompt-leakage hallucinations to strip
-_PROMPT_ARTIFACTS = [
-    re.compile(re.escape(a), re.IGNORECASE) for a in [
-        "it's cool", "it is cool", "mix karke likho", "ghar ja raha hoon",
-        "thank you for watching", "subscribe to my channel",
-        "please subscribe", "thanks for watching",
-    ]
-]
+def _load_hinglish_data():
+    """Load Hinglish normalization data from JSON and compile regex patterns."""
+    import json
+    path = _HINGLISH_DATA_PATH
+    with open(path, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+    return {
+        "prompt_artifacts": [re.compile(re.escape(a), re.IGNORECASE) for a in raw["prompt_artifacts"]],
+        "regex_patterns": [(re.compile(p, re.IGNORECASE), r) for p, r in raw["regex_patterns"]],
+        "phonetic_word_map": dict(raw["phonetic_word_map"]),
+        "spoken_command_patterns": [(re.compile(p, re.IGNORECASE), r) for p, r in raw["spoken_command_patterns"]],
+        "hindi_lowercase_midwords": frozenset(raw["hindi_lowercase_midwords"]),
+        "trailing_a_whitelist": frozenset(raw["trailing_a_whitelist"]),
+    }
 
-# Narrow regex patterns — never destructive to English/proper nouns
-_REGEX_PATTERNS = [
-    # Nasal endings: haim → hain, maim → main, nahim → nahin
-    (re.compile(r'\bhaim\b', re.IGNORECASE), 'hain'),
-    (re.compile(r'\bmaim\b', re.IGNORECASE), 'main'),
-    (re.compile(r'\bnahim\b', re.IGNORECASE), 'nahin'),
-    # Plural nasal collapse only after i/y (khirkiyam → khirkiyan).
-    # Narrower than (\w+)am which would corrupt "exam", "spam", etc.
-    (re.compile(r'(\w+[iy])am\b', re.IGNORECASE), r'\1an'),
-    # Word-boundary merges (Aapaki → aap ki)
-    (re.compile(r'\baapaki\b', re.IGNORECASE), 'aap ki'),
-    (re.compile(r'\baapane\b', re.IGNORECASE), 'aap ne'),
-    # NOTE: Schwa-syncope rules removed — the previous `(\w)X\b -> \1Y`
-    # patterns captured only 1 char (the stem) and would corrupt non-verb
-    # words like "galata" -> "glta" -> "glt". Specific verb-form fixes
-    # (karata, bolata, banata, lakhata etc.) live in _PHONETIC_WORD_MAP.
-    # Plural past correction
-    (re.compile(r'\brahe\s+tha\b', re.IGNORECASE), 'rahe the'),
-    (re.compile(r'\brahi\s+tha\b', re.IGNORECASE), 'rahi thi'),
-    (re.compile(r'\bkar\s+rahe\s+tha\b', re.IGNORECASE), 'kar rahe the'),
-    (re.compile(r'\bkar\s+rahi\s+tha\b', re.IGNORECASE), 'kar rahi thi'),
-    # Hallucination char repetition: "aaaaa" -> "aa"
-    (re.compile(r'(\S)\1{3,}'), r'\1\1'),
-    # Repeated punctuation (dots handled separately to preserve "..." ellipsis)
-    (re.compile(r'([!?,;:])\1+'), r'\1'),
-    # 4+ dots collapse to 3-dot ellipsis
-    (re.compile(r'\.{4,}'), '...'),
-    # Exactly 2 dots are typos: collapse to single period
-    (re.compile(r'(?<!\.)\.{2}(?!\.)'), '.'),
-    # Multi-space normalization
-    (re.compile(r' {2,}'), ' '),
-]
+_HD = _load_hinglish_data()
+_PROMPT_ARTIFACTS = _HD["prompt_artifacts"]
+_REGEX_PATTERNS = _HD["regex_patterns"]
+_PHONETIC_WORD_MAP = _HD["phonetic_word_map"]
+_SPOKEN_COMMAND_PATTERNS = _HD["spoken_command_patterns"]
+_HINDI_LOWERCASE_MIDWORDS = _HD["hindi_lowercase_midwords"]
+_TRAILING_A_WHITELIST = _HD["trailing_a_whitelist"]
 
-# Word-level phonetic confusions: { wrong → right }
-# Only entries that cannot collide with English / proper nouns.
-_PHONETIC_WORD_MAP = {
-    # ── Voice / aawaz family ────────────────────────────────────────────────
-    'avaj': 'awaaz', 'awaj': 'awaaz', 'aawaj': 'awaaz', 'aavaj': 'awaaz',
-    'evaj': 'awaaz', 'ebaj': 'awaaz', 'aubaj': 'awaaz', 'yavaj': 'awaaz',
-    'aavad': 'awaaz', 'aabd': 'awaaz', 'yavaja': 'awaaz', 'yawaja': 'awaaz',
-    # ITRANS-transliterated trailing-a variants (आवाज -> "avaja")
-    'avaja': 'awaaz', 'awaja': 'awaaz', 'aawaja': 'awaaz', 'aavaja': 'awaaz',
-    # ── Demonstratives (this/that/those) ────────────────────────────────────
-    'isak': 'iska', 'isake': 'iske', 'asak': 'iska', 'asake': 'iske',
-    'usake': 'uske', 'usamge': 'uske', 'unake': 'unke', 'unon': 'unhe',
-    'yah': 'yeh', 'yahni': 'yani',
-    # ── Filler / common words ───────────────────────────────────────────────
-    'matalab': 'matlab', 'mathlab': 'matlab', 'matalaba': 'matlab',
-    'mathlaba': 'matlab',
-    'kebal': 'kabhi', 'kayee': 'kayi',
-    # ── Use / istemal ───────────────────────────────────────────────────────
-    'istemal': 'istemaal', 'sistemal': 'istemaal',
-    # ── Very / much / many ──────────────────────────────────────────────────
-    'bahuti': 'bahut', 'bahute': 'bahut', 'bahot': 'bahut', 'bohot': 'bahut',
-    'jitana': 'jitna', 'jitan': 'jitna', 'jetna': 'jitna', 'jetan': 'jitna',
-    'kitane': 'kitne',
-    # ── People / log ────────────────────────────────────────────────────────
-    'lokon': 'log', 'lokan': 'log',
-    # ── Time / when ─────────────────────────────────────────────────────────
-    'jabaka': 'jab', 'jabaki': 'jabki', 'takibi': 'taki',
-    'abe': 'abhi', 'abi': 'abhi',
-    # ── Better / behtar ─────────────────────────────────────────────────────
-    'bhetar': 'behtar', 'bhetara': 'behtar', 'btar': 'behtar',
-    'bahatar': 'behtar', 'bahatura': 'behtar',
-    # ── tum / tumhara family ────────────────────────────────────────────────
-    'tuma': 'tum', 'tomin': 'tum', 'tumin': 'tum',
-    'tomara': 'tumhara', 'tomahara': 'tumhara', 'tamara': 'tumhara',
-    'tamahara': 'tumhara', 'tomari': 'tumhari', 'tamari': 'tumhari',
-    'tamar': 'tumhara', 'tamare': 'tumhare',
-    'tamahem': 'tumhein', 'tumahem': 'tumhein', 'tumhem': 'tumhein',
-    'tumhaim': 'tumhein',
-    # ── Main / nahi / hoon ──────────────────────────────────────────────────
-    'mahan': 'main', 'kucha': 'kuch', 'kuchh': 'kuch',
-    # NOTE: 'hona' (होना = "to be") is itself a legit Hindi infinitive verb.
-    # Do NOT map 'hona' -> 'hoon' — destroys "sahi hona chahiye" semantics.
-    'sahar': 'sahi', 'sai': 'sahi', 'sehi': 'sahi',
-    'kui': 'koi', 'koee': 'koi',
-    'hun': 'hoon', 'mem': 'mein',
-    # ── Verb infinitives (karan → karna, etc.) ──────────────────────────────
-    'karan': 'karna', 'karana': 'karna', 'bolan': 'bolna', 'sunan': 'sunna',
-    # ── chahiye variants ────────────────────────────────────────────────────
-    'chayiye': 'chahiye', 'chayiya': 'chahiye', 'chahiya': 'chahiye',
-    'chaiye': 'chahiye', 'chaiya': 'chahiye', 'chahie': 'chahiye',
-    'chahiee': 'chahiye',
-    # ── Bhai variants ───────────────────────────────────────────────────────
-    'bahi': 'bhai', 'bhaee': 'bhai', 'bhaeee': 'bhai',
-    # ── lekin / agar / aur ──────────────────────────────────────────────────
-    'likin': 'lekin', 'ager': 'agar', 'aura': 'aur',
-    # ── Galat / galati / gadbad ─────────────────────────────────────────────
-    'gantiya': 'galatiya', 'galab': 'galat', 'galah': 'galat',
-    'galate': 'galat', 'galabag': 'gadbad', 'galti': 'galati',
-    'galtiyan': 'galatiyan', 'gadabag': 'gadbad',
-    'garabari': 'gadbad', 'garabar': 'gadbad',
-    # ── Please / fix / minor ────────────────────────────────────────────────
-    'plist': 'please', 'plij': 'please', 'pliz': 'please',
-    'phiks': 'fix', 'fiks': 'fix', 'mainar': 'minor',
-    'mahanat': 'mehnat', 'tariph': 'tarif',
-    # ── Problem / translate / mushkil / gussa ───────────────────────────────
-    'probalam': 'problem', 'transalet': 'translation',
-    'mushah': 'mushkil', 'mahalab': 'mushkil',
-    'gussha': 'gussa', 'gusal': 'gussa',
-    # ── Improvement ─────────────────────────────────────────────────────────
-    'aainprog': 'improvement', 'ainprog': 'improvement',
-    'inproement': 'improvement', 'inprovement': 'improvement',
-    'inproovement': 'improvement',
-    # ── Zarurat ─────────────────────────────────────────────────────────────
-    'jaruaat': 'zarurat', 'jarubat': 'zarurat', 'jarrubat': 'zarurat',
-    'jaruat': 'zarurat', 'zaruat': 'zarurat', 'jarurah': 'zarurat',
-    'jarup': 'zarurat', 'zaruat': 'zarurat',
-    # ── Achha ───────────────────────────────────────────────────────────────
-    'achchha': 'achha', 'achchhi': 'achhi',
-    # ── Result / sound / boosted ────────────────────────────────────────────
-    'rijalat': 'result', 'rijalt': 'result', 'rijult': 'result',
-    'busted': 'boosted', 'saund': 'sound',
-    # ── Thoda / thik ────────────────────────────────────────────────────────
-    'tora': 'thoda', 'thike': 'thik', 'tik': 'thik',
-    # ── Zero-STT dropped vowels (verified narrow) ───────────────────────────
-    'kiy': 'kiya', 'sakata': 'sakta', 'lagt': 'lagta',
-    'nahar': 'nahin', 'pich': 'piche', 'pise': 'piche',
-    'chald': 'chal', 'chalad': 'chal',
-    # ── App-specific systematic errors ──────────────────────────────────────
-    'palac': 'pehle', 'pahal': 'pehle', 'isali': 'isliye',
-    'apa': 'aap', 'apak': 'aapka',
-    'deka': 'dekha', 'vekhane': 'dekhne', 'dedate': 'dete',
-    'jad': 'zyada', 'suriph': 'sirf', 'pravait': 'provide',
-    'simg': 'singh', 'simk': 'singh', 'khirkiyom': 'khidkiyon',
-    'gathiya': 'gatiya', 'gaari': 'galati', 'garii': 'galati',
-    # ── v→w for unambiguous Hindi possessives ───────────────────────────────
-    'vala': 'wala', 'vali': 'wali', 'vale': 'wale',
-    # ── Common Devanagari → Roman drift ─────────────────────────────────────
-    'dishtil': 'distil', 'dishdil': 'distil', 'disdil': 'distil',
-    # ── Zero-STT ITRANS leftovers seen in production ─────────────────────────
-    # tumhara family (transliteration adds 'a' after 'tumh')
-    'tumahara': 'tumhara', 'tumahari': 'tumhari', 'tumahare': 'tumhare',
-    'tumane': 'tumne', 'tumahem': 'tumhein',
-    # kyun family (Hindi क्यों -> "kyom" via ITRANS)
-    'kyom': 'kyun', 'kyomki': 'kyunki', 'kyon': 'kyun', 'kyonki': 'kyunki',
-    # shayad
-    'sayata': 'shayad', 'sayta': 'shayad', 'sayad': 'shayad',
-    # chahta / chahti / chahte
-    'chata': 'chahta', 'chati': 'chahti', 'chate': 'chahte',
-    # samapt / khatam
-    'samap': 'samapt', 'samapa': 'samapt', 'samaapa': 'samapt',
-    # toh
-    'tho': 'toh', 'thoh': 'toh',
-    # hamesha
-    'hamesa': 'hamesha', 'hames': 'hamesha', 'hamesh': 'hamesha',
-    # iska/isliye/iske family — ITRANS adds 'a'
-    'isaka': 'iska', 'isake': 'iske', 'isaki': 'iski',
-    'isaliya': 'isliye', 'isaliye': 'isliye',
-    # Verb infinitives (Zero-STT adds schwa)
-    'dekhana': 'dekhna', 'dekhan': 'dekhna',
-    'sikhana': 'sikhna', 'sikhan': 'sikhna',
-    'samajhana': 'samajhna', 'samajhan': 'samajhna',
-    'sunana': 'sunna',
-    'lakhana': 'likhna', 'lakhna': 'likhna', 'lakhat': 'lagta',
-    'lakhata': 'lagta', 'lakhta': 'lagta',
-    # Verb present continuous (Zero-STT inserts schwa)
-    'karata': 'karta', 'karati': 'karti', 'karate': 'karte',
-    'bolata': 'bolta', 'bolati': 'bolti', 'bolate': 'bolte',
-    'banata': 'banta', 'banati': 'banti', 'banate': 'bante',
-    'rakhata': 'rakhta', 'rakhati': 'rakhti',
-    'milata': 'milta', 'milati': 'milti', 'milate': 'milte',
-    'jaata': 'jata', 'jaati': 'jati', 'jaate': 'jate',
-    'aata': 'aata', 'aati': 'aati', 'aate': 'aate',
-    'lagata': 'lagta', 'lagati': 'lagti', 'lagate': 'lagte',
-    'galata': 'galat', 'ghalata': 'galat',
-    'bahuta': 'bahut', 'bahute': 'bahut',
-    'kama': 'kaam', 'kaama': 'kaam',
-    # Other ITRANS artifacts
-    'aba': 'ab',          # extra 'a' after ab
-    'maimne': 'maine', 'mainne': 'maine',  # past-tense "I"
-    'haine': 'hain',
-    'yahim': 'yahin', 'wahim': 'wahin', 'jahim': 'jahin',
-    # Anusvara left as 'm' after ITRANS conversion
-    'men': 'mein',         # में -> "men" via preclean (NOT English "men")
-    'meM': 'mein',         # uppercase M variant
-    # Numbers / counters
-    'eka': 'ek', 'doha': 'do', 'tina': 'teen',
-    # Time / common drift
-    'pahale': 'pehle', 'pahala': 'pehla', 'pahali': 'pehli',
-    'rata': 'raat', 'din': 'din',
-    'bota': 'bahut', 'bot': 'bahut',  # "बोत" misread of "बहुत"
-    # Postposition Google variant
-    'per': 'par',          # "per" used for "पर" in Google output
-    # Common adjective drift
-    'achchhe': 'achhe',
-    # Saath family
-    'sata': 'saath',       # ITRANS of "साथ"; also could be "सात" (7) but rare
-    'sath': 'saath',
-    # Poetic Hindi misreads
-    'aphasan': 'afsana', 'aphasana': 'afsana',
-    'aphasane': 'afsane',
-    'racha': 'raat',       # "रात" misread as "राच"
-    'rach': 'raat',
-    'maim': 'main',
-    'kyasa': 'kaisa', 'kyase': 'kaise', 'kyasi': 'kaisi',
-    'paoge': 'paaoge', 'paaoge': 'paaoge',
-    'phira': 'phir',
-    # Whisper hallucination words seen in log
-    'baddhiya': 'badhiya', 'baddhiyan': 'badhiya',
-    'badhahi': 'badhiya', 'badhah': 'badhiya',
-    # Honour / sound English drift cleanup
-    'savamda': 'sound', 'savamd': 'sound',
-}
-
-# Spoken-command patterns — convert "comma"/"full stop"/"new line" etc. to
-# their actual punctuation/formatting. Longer phrases first so "exclamation
-# mark" wins over a bare "exclamation".
-_SPOKEN_COMMAND_PATTERNS = [
-    # English — multi-word phrases first
-    (re.compile(r'\bnew\s+paragraph\b', re.IGNORECASE),    '\n\n'),
-    (re.compile(r'\bnew\s+line\b', re.IGNORECASE),         '\n'),
-    (re.compile(r'\bnext\s+line\b', re.IGNORECASE),        '\n'),
-    (re.compile(r'\bfull\s+stop\b', re.IGNORECASE),        '.'),
-    (re.compile(r'\bquestion\s+mark\b', re.IGNORECASE),    '?'),
-    (re.compile(r'\bexclamation\s+(?:mark|point)\b', re.IGNORECASE), '!'),
-    (re.compile(r'\bsemi[\s-]?colon\b', re.IGNORECASE),    ';'),
-    (re.compile(r'\bopen\s+quote[s]?\b', re.IGNORECASE),   '"'),
-    (re.compile(r'\bclose\s+quote[s]?\b', re.IGNORECASE),  '"'),
-    (re.compile(r'\bend\s+quote\b', re.IGNORECASE),        '"'),
-    (re.compile(r'\bopen\s+(?:bracket|parenthesis)\b', re.IGNORECASE),  '('),
-    (re.compile(r'\bclose\s+(?:bracket|parenthesis)\b', re.IGNORECASE), ')'),
-    (re.compile(r'\bopen\s+square\b', re.IGNORECASE),      '['),
-    (re.compile(r'\bclose\s+square\b', re.IGNORECASE),     ']'),
-    # English — single words
-    (re.compile(r'\bcomma\b', re.IGNORECASE),              ','),
-    (re.compile(r'\bperiod\b', re.IGNORECASE),             '.'),
-    (re.compile(r'\bcolon\b', re.IGNORECASE),              ':'),
-    (re.compile(r'\bhyphen\b', re.IGNORECASE),             '-'),
-    (re.compile(r'\bdash\b', re.IGNORECASE),               '-'),
-    (re.compile(r'\bslash\b', re.IGNORECASE),              '/'),
-    (re.compile(r'\bbackslash\b', re.IGNORECASE),          '\\\\'),
-    (re.compile(r'\bunderscore\b', re.IGNORECASE),         '_'),
-    (re.compile(r'\bat\s+sign\b', re.IGNORECASE),          '@'),
-    (re.compile(r'\bhashtag\b', re.IGNORECASE),            '#'),
-    # Hinglish / Hindi
-    (re.compile(r'\bnaya\s+paragraph\b', re.IGNORECASE),   '\n\n'),
-    (re.compile(r'\bnayi\s+line\b', re.IGNORECASE),        '\n'),
-    (re.compile(r'\bagli\s+line\b', re.IGNORECASE),        '\n'),
-    (re.compile(r'\bpurna\s+viram\b', re.IGNORECASE),      '.'),
-    (re.compile(r'\balp\s+viram\b', re.IGNORECASE),        ','),
-    (re.compile(r'\bprashn\s+chinh\b', re.IGNORECASE),     '?'),
-    (re.compile(r'\bvismayadhi[bm]odhak\b', re.IGNORECASE), '!'),
-]
-
-# Common Hindi/Hinglish words that should ALWAYS be lowercase mid-sentence.
-# Google's en-IN ASR randomly Title-Cases words mid-sentence ("Sab Sahi Hai" etc.).
-# After the first word, any title-cased entry from this set gets lowercased.
-# Kept conservative — only words that are NEVER proper nouns.
-_HINDI_LOWERCASE_MIDWORDS = frozenset([
-    # Pronouns / possessives
-    'main', 'mein', 'tum', 'aap', 'hum', 'woh', 'yeh', 'ye', 'wo',
-    'mera', 'meri', 'mere', 'tera', 'teri', 'tere',
-    'aapka', 'aapki', 'aapke', 'tumhara', 'tumhari', 'tumhare',
-    'hamara', 'hamari', 'hamare', 'unka', 'unki', 'unke',
-    'uska', 'uski', 'uske', 'iska', 'iski', 'iske',
-    'mujhe', 'tujhe', 'usse', 'usko', 'mujhko', 'tumko',
-    # Verbs (be / do / go / come / say)
-    'hai', 'hain', 'tha', 'thi', 'the', 'hoon', 'ho', 'hoga', 'honga',
-    'hona', 'hota', 'hoti', 'hote', 'hua', 'huye', 'huyi',
-    'kar', 'karo', 'karna', 'karta', 'karte', 'karti',
-    'kara', 'kari', 'kiya', 'kiye', 'ja', 'jao', 'jana', 'gaya', 'gayi',
-    'aa', 'aao', 'aana', 'aaya', 'aayi', 'aate', 'aati',
-    'le', 'lo', 'liya', 'de', 'do', 'diya', 'dete', 'deti',
-    'bol', 'bolo', 'bola', 'boli', 'bole',
-    'rakh', 'rakha', 'rakhi', 'rakhe',
-    'mil', 'mila', 'mili', 'mile', 'milta', 'milti',
-    'samajh', 'samjho', 'samjha', 'samajhi',
-    # Continuous (raha/rahi/rahe)
-    'raha', 'rahi', 'rahe', 'rahega', 'rahegi',
-    # Common particles / postpositions / conjunctions
-    'aur', 'ya', 'agar', 'lekin', 'magar', 'kyunki', 'kyuki',
-    'jab', 'tab', 'kab', 'jaha', 'waha', 'kaha', 'yaha',
-    'phir', 'fir', 'ab', 'abhi', 'kabhi', 'hamesha', 'humesha',
-    'se', 'ko', 'me', 'mein', 'par', 'pe', 'tak', 'bina',
-    'liye', 'isliye', 'kyun', 'kyon',
-    'bhi', 'hi', 'na', 'nahin', 'nahi', 'mat',
-    'jo', 'jiska', 'jiska', 'jise', 'wo', 'usko',
-    # Adjectives / quantifiers / common
-    'sab', 'kuch', 'koi', 'kai', 'thoda', 'zyada', 'bahut', 'kam',
-    'sahi', 'galat', 'achha', 'accha', 'acchi', 'acche',
-    'naya', 'purana', 'bada', 'chhota', 'lamba', 'chhoti',
-    'pyara', 'sundar', 'badhiya', 'gandhi',
-    # Common nouns (low risk of being a proper noun)
-    'baat', 'kaam', 'samay', 'din', 'raat', 'subah', 'shaam',
-    'ghar', 'aaj', 'kal', 'parso', 'hafta', 'mahina', 'saal',
-    'naam', 'jagah', 'cheez', 'paani', 'khana', 'kapda', 'kapde',
-    'matlab', 'taraf', 'tarah', 'awaaz', 'awaz', 'aawaz',
-    'dikkat', 'pareshani', 'mushkil', 'asaan', 'mushkilen',
-    # Sunai/dikhai etc.
-    'sunai', 'dikhai', 'sunna', 'sun', 'suno', 'suna',
-    'dekhna', 'dekh', 'dekho', 'dekha',
-    # Quantity / answer
-    'haan', 'haa', 'na', 'nahin', 'nahi', 'shayad', 'jarur',
-])
-
-# Words that legitimately end in 'a' — never strip trailing 'a' from these.
-# Entries that do NOT end in 'a' would be no-ops (the stripper checks
-# `low.endswith('a')` first) and have been omitted.
-_TRAILING_A_WHITELIST = frozenset([
-    # ── Hindi pronouns / possessives ────────────────────────────────────────
-    'aapka', 'apna', 'hamara', 'mera', 'tera', 'tumhara', 'unka', 'uska',
-    'iska', 'inka', 'jinka', 'kinka',  # demonstratives ending in -a
-    'kya', 'kaha', 'jaha', 'waha', 'yaha',
-    # Hindi infinitives ending in 'a' (-na/-aa forms)
-    'hona', 'lana', 'paana', 'dena', 'lena', 'rona', 'kona',
-    'jeena', 'marna', 'rakhna', 'samjhna',
-    # ── Demonstrative adjectives (kaisa/waisa family) ──────────────────────
-    'aisa', 'jaisa', 'kaisa', 'waisa', 'kaunsa', 'itna', 'jitna', 'utna',
-    # ── Future tense verbs (-ega) ──────────────────────────────────────────
-    'aayega', 'hoga', 'jaega', 'jayega', 'karega', 'milega', 'rahega', 'lagega',
-    # ── Past/perfect verb forms ────────────────────────────────────────────
-    'aaya', 'gaya', 'hua', 'tha', 'piya', 'gaaya',
-    'banaaya', 'banaya', 'dekha', 'sikha', 'paya', 'paaya',
-    'kiya', 'liya', 'diya', 'likha', 'pakda', 'padha', 'pita', 'mata',
-    'bhuja', 'roya', 'maara', 'haara', 'jeeta',
-    'bhaga', 'bhaagi', 'bhaage', 'jaga', 'jaagi', 'jaage',
-    # ── Modal / capability verbs (sakta/sakti/sakte) ───────────────────────
-    'sakta', 'sakti', 'sakte', 'pata', 'paata', 'paati',
-    'rakhta', 'rakhti', 'rakhte',
-    # ── Song / poetic Hindi words ─────────────────────────────────────────
-    'divana', 'diwana', 'deewana', 'parwana', 'tarana', 'afsana', 'dastana',
-    'jadu', 'sapna', 'apna', 'rasta', 'kahani', 'rishta',
-    # ── Continuous tense (raha/rahi) ───────────────────────────────────────
-    'raha', 'rahi',
-    # ── Infinitive verbs (-na) ─────────────────────────────────────────────
-    'aana', 'bolna', 'bhulna', 'chalna', 'chhupna', 'dena',
-    'jana', 'jeena', 'jhukna', 'kahna', 'kahana', 'karna', 'khana',
-    'khelna', 'lena', 'likhna', 'pakdna', 'pakadna', 'pina',
-    'sikhana', 'sona', 'sunna', 'samajna', 'samajhna', 'utarna',
-    'dekhna', 'sikhna',
-    # ── Common adjectives ──────────────────────────────────────────────────
-    'accha', 'acchha', 'achcha', 'achha', 'badhiya', 'bada', 'chhota',
-    'gora', 'kaala', 'kala', 'kaccha', 'meetha', 'meeta', 'mota',
-    'naya', 'neela', 'peela', 'puraana', 'purana', 'seedha', 'thanda',
-    'thoda', 'thora', 'safa', 'kacha', 'pakka',
-    # ── Common nouns ───────────────────────────────────────────────────────
-    'bachcha', 'bhasha', 'bharosa', 'chacha', 'dada', 'baniya',
-    'data', 'desha', 'dikha', 'duniya', 'ganga',
-    'hawa', 'kapda', 'khaata', 'macha', 'masala', 'rasta', 'roja',
-    'sapna', 'suna', 'yamuna', 'zyada', 'maja', 'maza',
-    'paani', 'pasinda', 'pasanda', 'rishta', 'shadi',
-    'beta', 'beti', 'pita', 'mata', 'mama',
-    'pata', 'paka', 'jaata',  # know/info, ripe, going (data/sata moved to dict)
-    # ── Verbs (past 3p) ────────────────────────────────────────────────────
-    'baitha', 'bana', 'bola', 'bula', 'chala', 'gira',
-    'jaga', 'jaaga', 'khaya', 'khada', 'lauta',
-    'mila', 'mara', 'rakha', 'roka', 'rota', 'soya', 'utha',
-    # ── English-origin words used in Hinglish (end in 'a') ─────────────────
-    'agenda', 'alpha', 'area', 'beta', 'camera', 'cinema', 'delta',
-    'drama', 'extra', 'idea', 'india', 'media', 'mocha', 'opera',
-    'panda', 'pasta', 'pizza', 'plaza', 'soda', 'tea', 'visa',
-    'vista', 'yoga', 'yatra',
-])
-
-# Legacy alias — _clean_hinglish now does everything.
-# These are kept so that downstream code referring to them does not break,
-# but they no longer drive behavior.
+# Legacy aliases — kept for any external callers.
 _HINGLISH_CLEANUP_PATTERNS = _REGEX_PATTERNS
 _ARTIFACT_PATTERNS = _PROMPT_ARTIFACTS
-_HINGLISH_FIX_PATTERNS = []  # Legacy stub; behavior moved into _PHONETIC_WORD_MAP.
+_HINGLISH_FIX_PATTERNS = []
 
 
 def _detect_device():
     """
     Advanced Hardware Detection for Bolo:
     Detects CUDA, checks VRAM, and sets optimal quantization.
+    Uses CTranslate2 native CUDA API (no torch import needed).
     """
     try:
-        import torch
-        if torch.cuda.is_available():
-            gpu_name = torch.cuda.get_device_name(0)
-            vram_total = torch.cuda.get_device_properties(0).total_memory / 1024**3
-            print(f"[Hardware] CUDA detected: {gpu_name} ({vram_total:.1f}GB VRAM)")
+        import ctranslate2
+        cuda_count = ctranslate2.get_cuda_device_count()
+        if cuda_count > 0:
+            import subprocess
+            gpu_name = "NVIDIA GPU"
+            vram_total = 0.0
+            try:
+                res = subprocess.run(
+                    ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"],
+                    capture_output=True, text=True, timeout=2
+                )
+                if res.returncode == 0 and res.stdout.strip():
+                    parts = res.stdout.strip().split(",")
+                    gpu_name = parts[0].strip()
+                    try:
+                        vram_total = float(parts[1].strip().split()[0]) / 1024
+                    except (ValueError, IndexError):
+                        vram_total = 0.0
+            except Exception:
+                pass
+            print(f"[Hardware] CUDA detected: {gpu_name}" + (f" ({vram_total:.1f}GB VRAM)" if vram_total else ""))
             # int8_float16: store weights as int8 (VRAM efficient), compute in float16 (fast GPU)
             return "cuda", "int8_float16"
     except ImportError:
-        pass
-
-    # Fallback check via nvidia-smi
-    try:
-        import subprocess
-        res = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], 
-                           capture_output=True, text=True, timeout=2)
-        if res.returncode == 0 and res.stdout.strip():
-            print(f"[Hardware] NVIDIA GPU found ({res.stdout.strip()}) but CUDA torch not available.")
-    except:
         pass
 
     print("[Hardware] Using CPU Mode (int8 quantization).")
@@ -471,9 +130,10 @@ class AudioEngine:
         self._stop_engine_event = threading.Event()
         self._bg_listener_thread = None
 
-        self._adjust_noise()
         self._init_audio()
         self._start_bg_listener()
+        # Non-blocking noise calibration (avoids 0.8s startup delay)
+        threading.Thread(target=self._adjust_noise, daemon=True).start()
 
     def _init_audio(self):
         try:
@@ -550,11 +210,11 @@ class AudioEngine:
                             if not self.is_recording:
                                 self.pre_roll_buffer.append(data)
                             # Update volume for UI meters (always update, even during recording)
-                            count = len(data) // 2
-                            if count > 0:
-                                shorts = struct.unpack("%dh" % count, data)
-                                sum_squares = sum(s * s for s in shorts)
-                                self.current_volume = math.sqrt(sum_squares / count)
+                            # Vectorized RMS — avoids Python-level unpack + loop (~31x/sec)
+                            samples = np.frombuffer(data, dtype=np.int16)
+                            if samples.size:
+                                samples_f = samples.astype(np.float32)
+                                self.current_volume = float(np.sqrt(np.mean(samples_f * samples_f)))
                 except Exception:
                     time.sleep(0.1)
             else:
@@ -709,8 +369,8 @@ class AudioEngine:
         print("[Audio] Zero-STT: transcribing in Hindi...")
         segs, _ = model.transcribe(
             audio_np,
-            beam_size=5,
-            best_of=3,
+            beam_size=2,  # Fast CPU inference (matches _transcribe_whisper_raw)
+            best_of=1,
             language="hi",
             task="transcribe",
             temperature=0.0,
@@ -793,13 +453,12 @@ class AudioEngine:
                 rewritten = low[:-2] + 'ega'     # kareg -> karega
 
             # 3c. Trailing-vowel cleanup (Zero-STT drops/adds short final 'a'/'ah')
-            # Only the OUTER whitelist check matters — if `low` is a legit word
-            # ending in 'a' (raha, jaisa, etc.), don't touch it. The trimmed form
-            # being valid is fine: "saba" -> "sab" is the desired behavior.
+            # NEVER strip future-tense suffixes (-ega, -egi, -enge — Hindi भविष्य काल)
             if rewritten is None and len(low) > 3 and low not in _TRAILING_A_WHITELIST:
                 if low.endswith('ah'):
                     rewritten = low[:-1]
-                elif low.endswith('a'):
+                elif low.endswith('a') and not (low.endswith('ega') or low.endswith('egi')
+                                                 or low.endswith('enge')):
                     trimmed = low[:-1]
                     if len(trimmed) >= 3:
                         rewritten = trimmed
@@ -926,15 +585,12 @@ class AudioEngine:
             audio = np.concatenate([padding, audio, padding])
 
         if for_whisper:
-            # Dynamic window: pad to nearest power-of-2, min 3s (was fixed 30s)
+            # Faster-Whisper accepts arbitrary-length audio. Only pad very short
+            # clips; power-of-two padding could nearly double inference work
+            # (for example, a 17-second recording became 32 seconds).
             min_samples = 3 * 16000
-            padded_len = max(min_samples, len(audio))
-            # Round up to nearest power of 2 for faster FFT
-            target_samples = 1 << (padded_len - 1).bit_length()
-            if len(audio) > target_samples:
-                audio = audio[:target_samples]
-            else:
-                audio = np.pad(audio, (0, target_samples - len(audio)), 'constant')
+            if len(audio) < min_samples:
+                audio = np.pad(audio, (0, min_samples - len(audio)), 'constant')
             return audio
         else:
             # int16 bytes for speech_recognition.AudioData
@@ -974,7 +630,7 @@ class AudioEngine:
                 if self.stream:
                     try:
                         self.stream.close()
-                    except:
+                    except Exception:
                         pass
                 self._initialize_stream()
 
@@ -1013,11 +669,10 @@ class AudioEngine:
                     continue
                 self.audio_frames.append(data)
                 frame_count += 1
-                count = len(data) // 2
-                if count > 0:
-                    shorts = struct.unpack(f"{count}h", data)
-                    sum_squares = sum(s * s for s in shorts)
-                    self.current_volume = math.sqrt(sum_squares / count)
+                samples = np.frombuffer(data, dtype=np.int16)
+                if samples.size:
+                    samples_f = samples.astype(np.float32)
+                    self.current_volume = float(np.sqrt(np.mean(samples_f * samples_f)))
             except OSError as e:
                 # Stream closed mid-read; expected during shutdown
                 print(f"[Audio] Stream OSError during read: {e}")
@@ -1233,8 +888,8 @@ class AudioEngine:
             audio_np,
             language="hi",
             task="transcribe",
-            beam_size=5,
-            best_of=3,
+            beam_size=2,  # Fast CPU inference (matches _transcribe_whisper_raw)
+            best_of=1,
             temperature=0.0,
             compression_ratio_threshold=2.4,
             no_speech_threshold=config.NO_SPEECH_THRESHOLD,

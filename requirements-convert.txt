@@ -1,0 +1,8 @@
+# Dependencies for one-time Zero-STT Hinglish model conversion only.
+# Install these BEFORE running model download from the GUI:
+#   pip install -r requirements-convert.txt
+#
+# Once model.bin exists in models/zero-stt-hinglish-ct2/,
+# these are no longer needed at runtime.
+transformers>=4.36.0
+torch>=2.0.0

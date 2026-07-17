@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[tool.ruff]
+target-version = "py313"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "F",      # pyflakes — unused-import, undefined-name, duplicate-key
+    "E", "W", # pycodestyle — whitespace, indentation
+    "I",      # isort — import ordering
+    "UP",     # pyupgrade — modernize
+    "N",      # pep8-naming
+]
+ignore = [
+    "E501",   # line-too-long (we use 120)
+    "N802",   # function name should be lowercase (legacy API compat)
+    "N803",   # argument name should be lowercase
+    "N806",   # variable in function should be lowercase
+    "N815",   # mixed-case class constant
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/__init__.py" = ["F401"]  # unused-import false positive for re-exports
+"main.py" = ["N802", "N806"]

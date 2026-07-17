@@ -70,7 +70,6 @@ _DEFAULTS = {
     "DEFAULT_LANGUAGE": 'en-IN',
     "TRANSCRIPTION_ENGINE": 'google',
     "WHISPER_MODEL": 'large-v3-turbo',
-    "HINGLISH_MODE": True,  # Default to Hinglish for this project
     "BEEP_ON_START": True,
     "BEEP_ON_END": True,
     "RUN_ON_STARTUP": False,
@@ -115,7 +114,6 @@ _SETTING_TYPES = {
     "DEFAULT_LANGUAGE": str,
     "TRANSCRIPTION_ENGINE": str,
     "WHISPER_MODEL": str,
-    "HINGLISH_MODE": bool,
     "BEEP_ON_START": bool,
     "BEEP_ON_END": bool,
     "RUN_ON_STARTUP": bool,
@@ -146,7 +144,6 @@ LONG_PRESS_THRESHOLD = _DEFAULTS["LONG_PRESS_THRESHOLD"]
 DEFAULT_LANGUAGE = _DEFAULTS["DEFAULT_LANGUAGE"]
 TRANSCRIPTION_ENGINE = _DEFAULTS["TRANSCRIPTION_ENGINE"]
 WHISPER_MODEL = _DEFAULTS["WHISPER_MODEL"]
-HINGLISH_MODE = _DEFAULTS["HINGLISH_MODE"]
 BEEP_ON_START = _DEFAULTS["BEEP_ON_START"]
 BEEP_ON_END = _DEFAULTS["BEEP_ON_END"]
 RUN_ON_STARTUP = _DEFAULTS["RUN_ON_STARTUP"]
@@ -300,7 +297,7 @@ def reset_settings():
     try:
         if os.path.exists(settings_path):
             os.remove(settings_path)
-    except:
+    except OSError:
         pass
 
 SUPPORTED_LANGUAGES = {

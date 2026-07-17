@@ -26,7 +26,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('src/icon.ico', 'src')] + _extra_datas,
+    datas=[('src/icon.ico', 'src'), ('src/hinglish_data.json', 'src')] + _extra_datas,
     hiddenimports=[
         'faster_whisper',
         'ctranslate2',
@@ -42,7 +42,6 @@ a = Analysis(
         'numpy',
         'scipy',
         'scipy.signal',
-        'transformers',
         'huggingface_hub',
         'pyperclip',
         'psutil',
@@ -54,7 +53,8 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        'torchvision', 'torchaudio',
+        'torch', 'torchvision', 'torchaudio',
+        'transformers',
         'matplotlib', 'pandas', 'tensorflow',
         'jupyter', 'IPython', 'notebook',
         'pytest', 'tests',
