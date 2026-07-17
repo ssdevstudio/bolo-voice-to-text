@@ -10,43 +10,29 @@ or developer tools required.
 |------------|--------------------------------------|
 | OS         | Windows 10 21H2+ or Windows 11       |
 | RAM        | 4 GB (8 GB recommended)              |
-| Disk       | 3 GB free (for the app + models)     |
+| Disk       | 500 MB free (for the app + small models) |
 | GPU        | Optional — NVIDIA CUDA for faster local STT |
 | Microphone | Required                             |
 | Internet   | Needed only for Google Speech engine and first-run Hinglish model download |
 
 ## Quick install (5 minutes)
 
-1. **Download all release assets** from:
+1. **Download `Bolo.exe`** from:
    👉 https://github.com/ssdevstudio/bolo-voice-to-text/releases/latest
 
-   The `.exe` is split across multiple files because it's > 2 GB. Download
-   **every file** in the release:
-   - `Bolo-v1.2.0.7z.001`  (~1.9 GB)
-   - `Bolo-v1.2.0.7z.002`  (~600 MB)
-   - (more `.00N` files if present)
+   The single `.exe` is ~225 MB — no multi-part extraction needed.
 
-   Keep **all parts in the same folder** — order matters.
-
-2. **Install 7-Zip** if you don't have it:
-   - Microsoft Store → search "7-Zip" → install (free)
-   - or https://www.7-zip.org/
-
-3. **Right-click `Bolo-v1.2.0.7z.001`** → **7-Zip → Extract Here**
-   7-Zip auto-picks up the other `.002`/`.003` parts. You'll get a single
-   `Bolo.exe`.
-
-4. **Move `Bolo.exe`** anywhere convenient — for example:
+2. **Move `Bolo.exe`** anywhere convenient — for example:
    - `C:\Apps\Bolo\` (recommended)
    - or your Desktop
 
-5. **First launch**:
+3. **First launch**:
    - Double-click `Bolo.exe`
-   - Wait 30–60 seconds on the very first run (Windows scans the executable)
+   - Wait a few seconds on the very first run (Windows scans the executable)
    - Allow microphone access if Windows prompts
    - The onboarding wizard will guide you through language selection
 
-6. **Start dictating**:
+4. **Start dictating**:
    - Click into any text field (browser, email, Notepad, anything)
    - Hold **Right Alt** and speak
    - Release — your words appear at the cursor

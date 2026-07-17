@@ -1,8 +1,6 @@
-import time
-import sys
 import ctypes
-import threading
-from . import config
+import sys
+import time
 
 
 class _ClipboardBackup:
@@ -122,8 +120,8 @@ class TextInjector:
         use_paste = len(text) > 15 or "\n" in text or any(ord(c) > 127 for c in text)
 
         try:
-            import pyperclip
             import keyboard
+            import pyperclip
 
             if use_paste:
                 # PASTE STRATEGY — FULL-FORMAT BACKUP

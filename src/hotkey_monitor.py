@@ -1,6 +1,8 @@
-import keyboard
-import time
 import threading
+import time
+
+import keyboard
+
 from . import config
 
 
@@ -105,7 +107,7 @@ class HotkeyMonitor:
                     self.press_time = time.time()
                     self._target_hwnd = self._get_active_window() # Capture focus immediately
                     self._already_triggered = False
-                    
+
                     if self._timer: self._timer.cancel()
                     self._timer = threading.Timer(self.threshold, self._on_long_press)
                     self._timer.daemon = True
@@ -115,7 +117,7 @@ class HotkeyMonitor:
                 if self._timer:
                     self._timer.cancel()
                     self._timer = None
-                
+
                 if self._already_triggered:
                     self._already_triggered = False
                     self.on_hold_end(self._target_hwnd) # Pass target window back

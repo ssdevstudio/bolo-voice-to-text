@@ -1,7 +1,7 @@
-import os
-import sys
 import logging
 import logging.handlers
+import os
+import sys
 
 
 class _StreamToLogger:
@@ -175,6 +175,7 @@ def is_run_on_startup(app_name):
 def purge_old_history(days=7):
     """Deletes history entries older than `days` days. Called at startup."""
     from datetime import datetime, timedelta
+
     from . import config
 
     history_path = config._get_history_path()

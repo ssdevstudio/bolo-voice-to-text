@@ -1,12 +1,14 @@
-import customtkinter as ctk
 import math
 import os
 import tkinter.messagebox as messagebox
+
+import customtkinter as ctk
 import pyperclip
 from PIL import Image, ImageDraw
+
 from . import config
-from .utils import set_run_on_startup, is_run_on_startup
 from .audio_engine import is_whisper_model_downloaded
+from .utils import set_run_on_startup
 
 # Colors & Fonts synced with config.py
 BG = config.CONTENT_BG
@@ -137,20 +139,20 @@ class HistoryCard(ctk.CTkFrame):
         self.text = text
         inn=ctk.CTkFrame(self, fg_color="transparent")
         inn.pack(fill="both", expand=True, padx=16, pady=12)
-        
+
         # Right side button container
         btn_frame = ctk.CTkFrame(inn, fg_color="transparent")
         btn_frame.pack(side="right", padx=(10,0))
-        
+
         self.copy_btn = ctk.CTkButton(btn_frame, text="Copy", width=64, height=28,
                                      fg_color=CRD2, hover_color=BDR, text_color=TXT,
                                      corner_radius=8, font=_f(11), command=self.copy_text)
         self.copy_btn.pack(pady=4)
-        
+
         # Text and timestamp on the left
         txt_frame = ctk.CTkFrame(inn, fg_color="transparent")
         txt_frame.pack(side="left", fill="both", expand=True)
-        
+
         ctk.CTkLabel(txt_frame, text=text, wraplength=420, justify="left", anchor="w",
                      font=_f(13), text_color=TXT).pack(fill="x")
         ctk.CTkLabel(txt_frame, text=ts, anchor="w", font=_f(10), text_color=MUT).pack(fill="x", pady=(4,0))
@@ -246,12 +248,12 @@ class BildGUI(ctk.CTk):
     def _switch(self, idx, fn=None):
         if hasattr(self, "_active_idx") and self._active_idx == idx: return
         for i, n in enumerate(self._navs): n.activate(i == idx)
-        
+
         # Smooth transition: prepare content then lift
         if fn: fn()
         self._active_idx = idx
         views = [self.dash_v, self.hist_v, self.sett_v]
-        
+
         # Lifting with a tiny delay ensures the UI thread is free to render properly
         self.after(10, lambda: views[idx].lift())
 
@@ -495,10 +497,10 @@ class BildGUI(ctk.CTk):
         c4 = grp("AUDIO QUALITY")
         r6 = row(c4, "Auto Sensitivity", "Automatically adjust microphone threshold for background noise.")
         self.auto_energy_switch = sw(r6, self.toggle_auto_energy, config.AUTO_ENERGY_THRESHOLD)
-        
+
         r7 = row(c4, "Start Buffer (Pre-roll)", "Captures extra audio before you speak to prevent cutting first words.")
         opt(r7, ["0.2s", "0.5s", "0.8s", "1.0s"], self.change_pre_roll, f"{config.PRE_ROLL_SECONDS}s", w=100)
-        
+
         r8 = row(c4, "End Buffer (Post-roll)", "Keeps recording longer after release to prevent cutting last words.", last=True)
         opt(r8, ["0.2s", "0.5s", "0.8s", "1.0s"], self.change_post_roll, f"{config.POST_ROLL_SECONDS}s", w=100)
 

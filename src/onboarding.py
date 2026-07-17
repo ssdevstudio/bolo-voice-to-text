@@ -9,13 +9,10 @@ Four pages:
 Shown only when config.ONBOARDING_COMPLETED is False. Sets the flag on
 "Get started" so it never re-appears (unless user manually resets).
 """
-import math
-import threading
 
 import customtkinter as ctk
 
 from . import config
-
 
 # Reuse GUI colours for visual consistency
 BG = config.CONTENT_BG

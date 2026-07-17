@@ -26,7 +26,7 @@ def atomic_json_read(path, default=None):
         if not os.path.exists(path):
             return default
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 content = f.read().strip()
             if not content:
                 return default

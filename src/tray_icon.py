@@ -1,9 +1,12 @@
-import pystray
-from PIL import Image, ImageDraw
+import math
 import threading
 import tkinter as tk
-import math
+
+import pystray
+from PIL import Image, ImageDraw
+
 from . import config
+
 
 class TrayIcon:
     def __init__(self, on_exit, on_lang_change):
@@ -26,7 +29,7 @@ class TrayIcon:
         self.volume_provider = None
         self._tk_thread = None
         self._update_scheduled = False
-        
+
     def create_icon_image(self, color):
         image = Image.new('RGBA', (64, 64), color=(0, 0, 0, 0))
         dc = ImageDraw.Draw(image)
@@ -151,7 +154,7 @@ class TrayIcon:
                     self._canvas.create_line(x, y0, x, y1, width=bar_w, capstyle=tk.ROUND, fill=config.RECORDING_COLOR)
             if self._tk_root and self._update_scheduled:
                 self._tk_root.after(30, self._update_waveform)
-        except Exception as e:
+        except Exception:
             if self._tk_root:
                 try:
                     self._tk_root.after(30, self._update_waveform)

@@ -1,14 +1,16 @@
-import speech_recognition as sr
-import threading
-import time
+import collections
 import json
 import os
 import re
-import pyaudio
+import threading
+import time
+
 import numpy as np
-import collections
+import pyaudio
+import speech_recognition as sr
 from indic_transliteration import sanscript
 from indic_transliteration.sanscript import transliterate
+
 from . import config
 
 # ─── Hinglish Data: loaded from external JSON ────────────────────────────
@@ -17,9 +19,8 @@ _HINGLISH_DATA_PATH = os.path.join(os.path.dirname(__file__), "hinglish_data.jso
 
 def _load_hinglish_data():
     """Load Hinglish normalization data from JSON and compile regex patterns."""
-    import json
     path = _HINGLISH_DATA_PATH
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         raw = json.load(f)
     return {
         "prompt_artifacts": [re.compile(re.escape(a), re.IGNORECASE) for a in raw["prompt_artifacts"]],
@@ -42,6 +43,26 @@ _TRAILING_A_WHITELIST = _HD["trailing_a_whitelist"]
 _HINGLISH_CLEANUP_PATTERNS = _REGEX_PATTERNS
 _ARTIFACT_PATTERNS = _PROMPT_ARTIFACTS
 _HINGLISH_FIX_PATTERNS = []
+
+# ─── Module-level compiled patterns (avoid recompile per call) ───────────
+# Word-and-punctuation splitter used in _clean_hinglish
+_RE_WORD_PUNCT = re.compile(r'^(.*?)([.,!?;:]+)?$')
+# Post-processing: spacing around punctuation
+_RE_SPACE_PUNCT = re.compile(r'[^\S\n]+([.,!?;:])')
+_RE_PUNCT_NOSPACE = re.compile(r'([.,!?;:])(?=[^\s.,!?;:])')
+_RE_NEWLINE_SPACE = re.compile(r'[^\S\n]*\n[^\S\n]*')
+_RE_NEWLINE_3PLUS = re.compile(r'\n{3,}')
+# Post-processing: punctuation dedup
+_RE_PUNCT_REPEAT = re.compile(r'([!?,;:])\1+')
+_RE_DOT_4PLUS = re.compile(r'\.{4,}')
+_RE_DOT_EXACT2 = re.compile(r'(?<!\.)\.{2}(?!\.)')
+_RE_SPACE_MULTI = re.compile(r'[^\S\n]+')
+# Post-processing: lowercase-midword splitter
+_RE_WORD_CASE = re.compile(r'^(\w+)([.,!?;:]*)$')
+# Transliteration cleanup
+_RE_ITRANS_DOT = re.compile(r'\.([a-zA-Z]+)')
+_RE_ITRANS_MARKS = re.compile(r'[\^~`]')
+_RE_DEVA_LEAK = re.compile(r'[ऀ-ॿ]')
 
 
 def _detect_device():
@@ -113,7 +134,7 @@ class AudioEngine:
         self.rate = config.SAMPLE_RATE
         self.chunk_size = config.CHUNK_SIZE
         self.sample_width = 2
-        
+
         self.current_volume = 0
         self._stop_event = threading.Event()
         self._record_thread = None
@@ -156,7 +177,7 @@ class AudioEngine:
                 frames_per_buffer=self.chunk_size,
                 start=True
             )
-            print(f"[Audio] Stream initialized successfully")
+            print("[Audio] Stream initialized successfully")
         except Exception as e:
             print(f"[Audio] Failed to initialize stream: {e}")
             self.stream = None
@@ -202,7 +223,7 @@ class AudioEngine:
                     if self.stream is None or not self.stream.is_active():
                         time.sleep(0.1)
                         continue
-                        
+
                     data = self.stream.read(self.chunk_size, exception_on_overflow=False)
                     if data:
                         with self._lock:
@@ -218,7 +239,7 @@ class AudioEngine:
                 except Exception:
                     time.sleep(0.1)
             else:
-                # When recording, the record_loop handles it, but we still want to 
+                # When recording, the record_loop handles it, but we still want to
                 # keep the pre_roll buffer somewhat fresh or just wait.
                 time.sleep(0.1)
 
@@ -427,7 +448,7 @@ class AudioEngine:
             if not raw:
                 continue
             # Peel trailing punctuation so dict matching works on bare word
-            m = re.match(r'^(.*?)([.,!?;:]+)?$', raw)
+            m = _RE_WORD_PUNCT.match(raw)
             word = m.group(1) if m else raw
             punct = (m.group(2) if m else '') or ''
             low = word.lower()
@@ -711,7 +732,7 @@ class AudioEngine:
     #  Processing
     # ------------------------------------------------------------------
     def _process_audio(self, language):
-        print(f"[Audio] _process_audio() called")
+        print("[Audio] _process_audio() called")
         raw_data = b"".join(self.audio_frames)
         self.audio_frames = []
 
@@ -803,15 +824,15 @@ class AudioEngine:
             text = pattern.sub(replacement, text)
         # Tighten spacing around punctuation: " ." -> ".", " ," -> ","
         # (Excludes newlines so "word\nword" stays intact.)
-        text = re.sub(r'[^\S\n]+([.,!?;:])', r'\1', text)
+        text = _RE_SPACE_PUNCT.sub(r'\1', text)
         # Ensure exactly one space after punctuation when followed by a
         # non-space, non-punct character. Doesn't touch consecutive punct
         # like "..." (ellipsis) or "?!".
-        text = re.sub(r'([.,!?;:])(?=[^\s.,!?;:])', r'\1 ', text)
+        text = _RE_PUNCT_NOSPACE.sub(r'\1 ', text)
         # Trim spaces around newlines: "word \n word" -> "word\nword"
-        text = re.sub(r'[^\S\n]*\n[^\S\n]*', '\n', text)
+        text = _RE_NEWLINE_SPACE.sub('\n', text)
         # Collapse triple+ newlines
-        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = _RE_NEWLINE_3PLUS.sub('\n\n', text)
         return text
 
     @staticmethod
@@ -833,11 +854,11 @@ class AudioEngine:
 
         # Collapse runs of repeated terminators (!!! -> !, ??? -> ?)
         # Dots handled specially so "..." ellipsis survives.
-        text = re.sub(r'([!?,;:])\1+', r'\1', text)
-        text = re.sub(r'\.{4,}', '...', text)
-        text = re.sub(r'(?<!\.)\.{2}(?!\.)', '.', text)
+        text = _RE_PUNCT_REPEAT.sub(r'\1', text)
+        text = _RE_DOT_4PLUS.sub('...', text)
+        text = _RE_DOT_EXACT2.sub('.', text)
         # Multi-space normalize (preserve newlines from "new line"/"new paragraph")
-        text = re.sub(r'[^\S\n]+', ' ', text)
+        text = _RE_SPACE_MULTI.sub(' ', text)
 
         # Lowercase Hindi common words that Google randomly Title-Cases
         # mid-sentence. Only affects positions AFTER the first word; first
@@ -847,7 +868,7 @@ class AudioEngine:
             for i in range(1, len(words)):
                 w = words[i]
                 # Strip trailing punct for lookup
-                m = re.match(r'^(\w+)([.,!?;:]*)$', w)
+                m = _RE_WORD_CASE.match(w)
                 if not m:
                     continue
                 bare, punct = m.group(1), m.group(2)
@@ -1011,7 +1032,7 @@ class AudioEngine:
             import threading
             result = [None]  # Use list to avoid nonlocal issues
             error = [None]
-            
+
             def transcribe_with_timeout():
                 try:
                     result[0] = self.recognizer.recognize_google(audio, language=language, show_all=False)
@@ -1021,23 +1042,23 @@ class AudioEngine:
                     error[0] = str(e)
                 except Exception as e:
                     error[0] = f"timeout: {e}"
-            
+
             thread = threading.Thread(target=transcribe_with_timeout)
             thread.daemon = True
             thread.start()
             thread.join(timeout=30.0)  # 30-second timeout
-            
+
             if thread.is_alive():
                 print("[Audio] Google transcription timeout (30s) - network too slow")
                 return ""
-            
+
             if error[0]:
                 if error[0] == "unknown":
                     print("[Audio] Google could not understand audio.")
                 else:
                     print(f"[Audio] Google request failed: {error[0]}")
                 return ""
-            
+
             text = result[0] if result[0] else ""
         except Exception as e:
             print(f"[Audio] Google transcription error: {e}")
@@ -1262,11 +1283,11 @@ class AudioEngine:
             res = transliterate(pre, sanscript.DEVANAGARI, sanscript.ITRANS)
             res = res.lower()
             # Strip ITRANS dot-prefixed markers (.d, .n, .t etc.)
-            res = re.sub(r'\.([a-zA-Z]+)', r'\1', res)
+            res = _RE_ITRANS_DOT.sub(r'\1', res)
             # Strip svarita (^), tilde (~), grave (`)
-            res = re.sub(r'[\^~`]', '', res)
+            res = _RE_ITRANS_MARKS.sub('', res)
             # Last-ditch: drop any Devanagari that survived
-            res = re.sub(r'[\u0900-\u097f]', '', res)
+            res = _RE_DEVA_LEAK.sub('', res)
             return res
         except Exception as e:
             print(f"[Audio] Transliteration error: {e}")

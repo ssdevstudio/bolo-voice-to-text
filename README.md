@@ -58,8 +58,8 @@ python -X utf8 tests/test_hinglish_cleanup.py
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
-Output: `dist/Bolo.exe` (~2.6 GB — bundles torch + CUDA + faster-whisper +
-transformers). The build is driven entirely by `Bolo.spec`.
+Output: `dist/Bolo.exe` (~225 MB — torch/transformers excluded from runtime;
+install `requirements-convert.txt` only if you need to convert a new STT model).
 
 ---
 
