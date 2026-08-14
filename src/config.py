@@ -62,7 +62,7 @@ def atomic_json_write(path: str, data: Any) -> bool:
 
 # Application Settings
 APP_NAME = "Bolo"
-VERSION = "1.2.0"
+VERSION = "1.2.2"
 
 # --- DEFAULTS ---
 _DEFAULTS = {
