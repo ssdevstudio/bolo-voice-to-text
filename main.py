@@ -6,6 +6,7 @@ import traceback
 import atexit
 import argparse
 import logging
+from typing import Any, Callable, Optional
 
 if sys.platform == "win32":
     try:
@@ -24,13 +25,13 @@ from src.utils import setup_logging, get_logger
 from src.onboarding import maybe_show as maybe_show_onboarding
 
 # ─── Structured Logging Setup ───────────────────────────────────────────────
-_logger = None  # Set in __main__ after config is loaded
+_logger: Optional[logging.Logger] = None  # Set in __main__ after config is loaded
 
 # ─── Single Instance Lock ───────────────────────────────────────────────────
-global_args = None  # CLI arguments, set in __main__
+global_args: Optional[argparse.Namespace] = None  # CLI arguments, set in __main__
 _LOCK_FILE = config._get_lock_path()  # APPDATA when frozen, project root in dev
 
-def _cleanup_temp_files():
+def _cleanup_temp_files() -> None:
     """Clean up temporary files on exit."""
     if os.path.exists(_LOCK_FILE):
         try:
@@ -42,7 +43,7 @@ def _cleanup_temp_files():
 # Register cleanup handler
 atexit.register(_cleanup_temp_files)
 
-def _kill_existing_instances():
+def _kill_existing_instances() -> None:
     """Kill prior Bolo instance via lock-file PID.
 
     Lock file is created in user data dir and stores the PID of the running
@@ -93,12 +94,12 @@ def _kill_existing_instances():
         except Exception:
             pass
 
-def _write_lock():
+def _write_lock() -> None:
     """Write current PID to lock file."""
     with open(_LOCK_FILE, "w") as f:
         f.write(str(os.getpid()))
 
-def _remove_lock():
+def _remove_lock() -> None:
     """Remove lock file on exit."""
     try:
         if os.path.exists(_LOCK_FILE):
@@ -109,7 +110,7 @@ def _remove_lock():
 
 
 class BoloApp:
-    def __init__(self):
+    def __init__(self) -> None:
         self.current_language = config.DEFAULT_LANGUAGE
         self.audio_engine = AudioEngine()
         self.injector = TextInjector()
@@ -129,7 +130,7 @@ class BoloApp:
         self._pending_hwnd = None
         self._processing_thread: threading.Thread | None = None
 
-    def on_settings_change(self, key, value):
+    def on_settings_change(self, key: str, value: Any) -> None:
         if key == 'language':
             self.set_language(value)
         elif key == 'hotkey':
@@ -165,7 +166,7 @@ class BoloApp:
                 maxlen=int(self.audio_engine.rate / self.audio_engine.chunk_size * value)
             )
 
-    def _on_download_complete(self, success):
+    def _on_download_complete(self, success: bool) -> None:
         """Called from GUI thread when download completes."""
         if hasattr(self.gui, '_is_downloading'):
             self.gui._is_downloading = False
@@ -177,13 +178,13 @@ class BoloApp:
             self.gui.status_lbl.configure(text="Model download failed", text_color=config.ERROR_COLOR)
             self.gui.after(3000, lambda: self.gui.status_lbl.configure(text="Ready to transcribe", text_color=config.TEXT_PRIMARY))
 
-    def set_language(self, lang_code):
+    def set_language(self, lang_code: str) -> None:
         print(f"Language changed to: {lang_code}")
         self.current_language = lang_code
         self.gui.update_ui_language(lang_code)
         self.tray.update_language_state(lang_code)
 
-    def start_recording(self, target_hwnd=None):
+    def start_recording(self, target_hwnd: Optional[int] = None) -> None:
         if self.audio_engine.is_recording:
             return
         # Capture target HWND once at KEY_DOWN (most accurate moment)
@@ -205,7 +206,7 @@ class BoloApp:
         # Store hwnd for _process_and_inject thread (captured once, no race)
         self._pending_hwnd = hwnd
 
-    def stop_recording(self, target_hwnd=None):
+    def stop_recording(self, target_hwnd: Optional[int] = None) -> None:
         if not self.audio_engine.is_recording:
             return
         hwnd = self._pending_hwnd
@@ -219,7 +220,7 @@ class BoloApp:
         self._processing_thread = t
         t.start()
 
-    def _process_and_inject(self, hwnd):
+    def _process_and_inject(self, hwnd: Optional[int]) -> None:
         try:
             text = self.audio_engine.stop_recording(language=self.current_language)
             self._schedule_gui(lambda: self.gui.set_listening_state("idle"))
@@ -237,7 +238,7 @@ class BoloApp:
             self._schedule_gui(lambda: self.gui.set_listening_state("idle"))
             self._schedule_gui(lambda: self.tray.set_icon_state(recording=False))
 
-    def _schedule_gui(self, callback):
+    def _schedule_gui(self, callback: Callable[[], None]) -> None:
         """Thread-safe GUI callback scheduler with error handling."""
         try:
             # Only schedule the callback if GUI is still active
@@ -255,7 +256,7 @@ class BoloApp:
         except Exception as e:
             print(f"[GUI] Error scheduling callback: {e}")
 
-    def run(self):
+    def run(self) -> None:
         print(f"{config.APP_NAME} starting...")
         self.monitor.start()
         tray_t = threading.Thread(target=self.tray.run, daemon=True)
@@ -278,7 +279,7 @@ class BoloApp:
             if not self._quitting:
                 self.quit_app()
 
-    def quit_app(self):
+    def quit_app(self) -> None:
         if self._quitting:
             return
         self._quitting = True
@@ -318,10 +319,10 @@ class BoloApp:
                 print("[Main] Transcription thread still alive after 5s shutdown timeout")
         sys.exit(0)
 
-    def show_window(self):
+    def show_window(self) -> None:
         self.gui.show_window()
 
-    def _prewarm_model(self):
+    def _prewarm_model(self) -> None:
         """Prewarm local model in background (downloaded models only)."""
         import threading
         def _warm():

@@ -1,6 +1,7 @@
 import math
 import os
 import tkinter.messagebox as messagebox
+from typing import Any, Callable, Optional
 
 import customtkinter as ctk
 import pyperclip
@@ -25,9 +26,10 @@ MUT = config.TEXT_MUTED
 DIM = config.TEXT_MUTED # Legacy support
 FONT = config.FONT_FAMILY
 
-def _f(sz, w="normal"): return ctk.CTkFont(family=FONT, size=sz, weight=w)
+def _f(sz: int, w: str = "normal") -> Any:
+    return ctk.CTkFont(family=FONT, size=sz, weight=w)
 
-def create_default_icon():
+def create_default_icon() -> str:
     p = os.path.join(os.path.dirname(__file__), "icon.ico")
     img = Image.new("RGBA",(256,256),(0,0,0,0)); d = ImageDraw.Draw(img)
     for r in [(108,32,148,224),(56,80,96,176),(160,80,200,176),(4,112,44,144),(212,112,252,144)]:
@@ -35,15 +37,15 @@ def create_default_icon():
     img.save(p, format="ICO"); return p
 
 class PulseDot(ctk.CTkCanvas):
-    def __init__(self, p, size=10, color=ACC, bg=BG, **kw):
+    def __init__(self, p: Any, size: int = 10, color: str = ACC, bg: str = BG, **kw: Any) -> None:
         super().__init__(p, width=size, height=size, highlightthickness=0, bg=bg, **kw)
         self.sz=size; self.col=color; self._on=False; self._s=0; self._idle()
-    def _idle(self):
+    def _idle(self) -> None:
         self.delete("all"); r=self.sz//2; c=self.sz//2
         self.create_oval(c-r,c-r,c+r,c+r, fill=MUT, outline="")
-    def start_pulse(self): self._on=True; self._run()
-    def stop_pulse(self): self._on=False; self._idle()
-    def _run(self):
+    def start_pulse(self) -> None: self._on=True; self._run()
+    def stop_pulse(self) -> None: self._on=False; self._idle()
+    def _run(self) -> None:
         if not self._on: return
         self._s+=0.18; p=math.sin(self._s)*0.4+0.6
         r=int((self.sz//2)*p); c=self.sz//2; self.delete("all")
@@ -52,11 +54,11 @@ class PulseDot(ctk.CTkCanvas):
         self.after(30, self._run)
 
 class MicOrb(ctk.CTkCanvas):
-    def __init__(self, p, size=148, **kw):
+    def __init__(self, p: Any, size: int = 148, **kw: Any) -> None:
         kw.pop("bg", None)
         super().__init__(p, width=size, height=size, highlightthickness=0, bg=BG, **kw)
         self.sz=size; self._on=False; self._proc=False; self._s=0.0; self._draw()
-    def _draw(self):
+    def _draw(self) -> None:
         self.delete("all"); c=self.sz//2; R=52
         if self._on:
             p=math.sin(self._s)*0.5+0.5
@@ -80,23 +82,23 @@ class MicOrb(ctk.CTkCanvas):
         self.create_arc(mc-8,mb-3,mc+8,mb+11, start=0,extent=-180, style="arc", outline=col, width=3)
         self.create_line(mc,mb+8,mc,mb+17, fill=col, width=3)
         self.create_line(mc-9,mb+17,mc+9,mb+17, fill=col, width=3)
-    def start(self): self._on=True; self._proc=False; self._anim()
-    def stop(self): self._on=False; self._proc=False; self._draw()
-    def processing(self): self._on=False; self._proc=True; self._proc_anim()
-    def _proc_anim(self):
+    def start(self) -> None: self._on=True; self._proc=False; self._anim()
+    def stop(self) -> None: self._on=False; self._proc=False; self._draw()
+    def processing(self) -> None: self._on=False; self._proc=True; self._proc_anim()
+    def _proc_anim(self) -> None:
         if not self._proc: return
         self._draw(); self.after(30, self._proc_anim)
-    def _anim(self):
+    def _anim(self) -> None:
         if not self._on: return
         self._s+=0.10; self._draw(); self.after(30, self._anim)
 
 class WaveformCanvas(ctk.CTkCanvas):
-    def __init__(self, p, **kw):
+    def __init__(self, p: Any, **kw: Any) -> None:
         super().__init__(p, highlightthickness=0, **kw)
         self.n=24; self._on=False; self.t=0.0; self.color=ACC
-    def start(self): self._on=True; self._anim()
-    def stop(self): self._on=False; self.delete("all")
-    def _anim(self):
+    def start(self) -> None: self._on=True; self._anim()
+    def stop(self) -> None: self._on=False; self.delete("all")
+    def _anim(self) -> None:
         if not self._on: return
         self.delete("all"); W=self.winfo_width() or 300; H=self.winfo_height() or 40
         self.t+=0.16; bw=4; gap=3; tot=self.n*(bw+gap)-gap; sx=(W-tot)/2
@@ -108,7 +110,7 @@ class WaveformCanvas(ctk.CTkCanvas):
         self.after(30, self._anim)
 
 class NavItem(ctk.CTkFrame):
-    def __init__(self, p, icon, label, cmd, **kw):
+    def __init__(self, p: Any, icon: str, label: str, cmd: Callable[[], None], **kw: Any) -> None:
         super().__init__(p, fg_color="transparent", cursor="hand2", corner_radius=8, **kw)
         self._active=False; self._cmd=cmd
         self._bar=ctk.CTkFrame(self, width=3, height=30, fg_color=ACC, corner_radius=2)
@@ -120,21 +122,21 @@ class NavItem(ctk.CTkFrame):
             w.bind("<Button-1>", lambda e: self._cmd())
             w.bind("<Enter>", lambda e: self._hover(True))
             w.bind("<Leave>", lambda e: self._hover(False))
-    def activate(self, v):
+    def activate(self, v: bool) -> None:
         self._active=v
         self.configure(fg_color=CRD if v else "transparent")
         if v: self._bar.place(x=0, rely=0.5, anchor="w")
         else: self._bar.place_forget()
         self._ico.configure(text_color=ACC if v else MUT)
         self._lbl.configure(text_color=TXT if v else MUT, font=_f(13, "bold" if v else "normal"))
-    def _hover(self, h):
+    def _hover(self, h: bool) -> None:
         if not self._active:
             self.configure(fg_color=CRD2 if h else "transparent")
             self._ico.configure(text_color=TXT if h else MUT)
             self._lbl.configure(text_color=TXT if h else MUT)
 
 class HistoryCard(ctk.CTkFrame):
-    def __init__(self, p, text, ts, **kw):
+    def __init__(self, p: Any, text: str, ts: str, **kw: Any) -> None:
         super().__init__(p, fg_color=CRD, corner_radius=10, border_width=1, border_color=BDR, **kw)
         self.text = text
         inn=ctk.CTkFrame(self, fg_color="transparent")
@@ -157,7 +159,7 @@ class HistoryCard(ctk.CTkFrame):
                      font=_f(13), text_color=TXT).pack(fill="x")
         ctk.CTkLabel(txt_frame, text=ts, anchor="w", font=_f(10), text_color=MUT).pack(fill="x", pady=(4,0))
 
-    def copy_text(self):
+    def copy_text(self) -> None:
         try:
             pyperclip.copy(self.text)
             self.copy_btn.configure(text="Copied!", text_color=ACC, fg_color="#201012")
@@ -167,7 +169,7 @@ class HistoryCard(ctk.CTkFrame):
 
 
 class BildGUI(ctk.CTk):
-    def __init__(self, on_settings_change, on_exit):
+    def __init__(self, on_settings_change: Callable[..., None], on_exit: Callable[..., None]) -> None:
         super().__init__()
         self.on_settings_change = on_settings_change
         self.on_exit_callback = on_exit
@@ -245,7 +247,7 @@ class BildGUI(ctk.CTk):
         # Re-raise active view on restore
         self.bind("<Map>", self._on_restore)
 
-    def _switch(self, idx, fn=None):
+    def _switch(self, idx: int, fn: Optional[Callable[..., None]] = None) -> None:
         if hasattr(self, "_active_idx") and self._active_idx == idx: return
         for i, n in enumerate(self._navs): n.activate(i == idx)
 
@@ -257,7 +259,7 @@ class BildGUI(ctk.CTk):
         # Lifting with a tiny delay ensures the UI thread is free to render properly
         self.after(10, lambda: views[idx].lift())
 
-    def _on_restore(self, e=None):
+    def _on_restore(self, e: Optional[Any] = None) -> None:
         if e and e.widget is not self:
             return
         try:
@@ -265,7 +267,7 @@ class BildGUI(ctk.CTk):
             views[self._active_idx].lift()
         except OSError: pass
 
-    def _show_dash(self):
+    def _show_dash(self) -> None:
         # Refresh dynamic dashboard labels (hotkey may have changed elsewhere)
         try:
             self.hotkey_lbl.configure(text=f"Hold  {config.ACTIVATION_KEY.upper()}  to record")
@@ -273,20 +275,20 @@ class BildGUI(ctk.CTk):
         except Exception:
             pass
 
-    def _show_hist(self): self.refresh_history()
-    def _show_sett(self):
+    def _show_hist(self) -> None: self.refresh_history()
+    def _show_sett(self) -> None:
         self.refresh_download_button()
         self._toggle_whisper_ui(config.TRANSCRIPTION_ENGINE)
         self.update_model_description()
         self.update_engine_info()
 
     # public aliases used by main.py
-    def show_dashboard(self): self._switch(0, self._show_dash)
-    def show_history(self):   self._switch(1, self._show_hist)
-    def show_settings(self):  self._switch(2, self._show_sett)
+    def show_dashboard(self) -> None: self._switch(0, self._show_dash)
+    def show_history(self) -> None:   self._switch(1, self._show_hist)
+    def show_settings(self) -> None:  self._switch(2, self._show_sett)
 
     # ── Dashboard ─────────────────────────────────────────────────────────
-    def _build_dash(self):
+    def _build_dash(self) -> Any:
         v = ctk.CTkFrame(self._cont, corner_radius=0, fg_color=BG)
 
         # Header
@@ -347,7 +349,7 @@ class BildGUI(ctk.CTk):
         return v
 
     # ── History ───────────────────────────────────────────────────────────
-    def _build_hist(self):
+    def _build_hist(self) -> Any:
         v = ctk.CTkFrame(self._cont, corner_radius=0, fg_color=BG)
 
         hdr = ctk.CTkFrame(v, fg_color=SB, corner_radius=0, height=44)
@@ -369,7 +371,7 @@ class BildGUI(ctk.CTk):
         return v
 
     # ── Settings ──────────────────────────────────────────────────────────
-    def _build_sett(self):
+    def _build_sett(self) -> Any:
         v = ctk.CTkFrame(self._cont, corner_radius=0, fg_color=BG)
 
         hdr = ctk.CTkFrame(v, fg_color=SB, corner_radius=0, height=44)
@@ -514,7 +516,7 @@ class BildGUI(ctk.CTk):
 
 
     # ── State ─────────────────────────────────────────────────────────────
-    def set_listening_state(self, state, text=""):
+    def set_listening_state(self, state: str, text: str = "") -> None:
         if state == "listening":
             self.mic_orb.start(); self.waveform.color=ACC; self.waveform.start()
             self.status_lbl.configure(text="Listening…", text_color=ACC)
@@ -528,7 +530,7 @@ class BildGUI(ctk.CTk):
             self.status_lbl.configure(text="Ready to transcribe", text_color=TXT)
             self.status_badge.configure(text="  ●  Idle  ", text_color=MUT, fg_color=CRD)
 
-    def update_ui_language(self, lang_code):
+    def update_ui_language(self, lang_code: str) -> None:
         for label, c in config.SUPPORTED_LANGUAGES.items():
             if c == lang_code:
                 try:
@@ -544,7 +546,7 @@ class BildGUI(ctk.CTk):
                 break
 
     # ── History ───────────────────────────────────────────────────────────
-    def refresh_history(self):
+    def refresh_history(self) -> None:
         items = config.atomic_json_read(config._get_history_path(), default=[])
         if not isinstance(items, list):
             items = []
@@ -558,18 +560,18 @@ class BildGUI(ctk.CTk):
         for e in reversed(items):
             HistoryCard(self.history_scroll, e.get("text", ""), e.get("time", "")).pack(fill="x", pady=5)
 
-    def clear_history(self):
+    def clear_history(self) -> None:
         if not messagebox.askyesno("Clear History", "Delete all transcription history?\n\nThis cannot be undone."):
             return
         config.atomic_json_write(config._get_history_path(), [])
         self.refresh_history()
 
     # ── Callbacks ─────────────────────────────────────────────────────────
-    def change_language(self, choice):
+    def change_language(self, choice: str) -> None:
         code = config.SUPPORTED_LANGUAGES[choice]
         config.save_setting("DEFAULT_LANGUAGE", code); self.on_settings_change("language", code)
 
-    def change_hotkey(self, choice):
+    def change_hotkey(self, choice: str) -> None:
         # Validate hotkey before saving
         if not config.save_setting("ACTIVATION_KEY", choice):
             # Show error message to user
@@ -580,7 +582,7 @@ class BildGUI(ctk.CTk):
         self.on_settings_change("hotkey", choice)
         self.hotkey_lbl.configure(text=f"Hold  {choice.upper()}  to record")
 
-    def _show_hotkey_error(self, invalid_choice):
+    def _show_hotkey_error(self, invalid_choice: str) -> None:
         """Show error message when hotkey validation fails."""
         valid_list = ", ".join(sorted(config.VALID_HOTKEYS))
         msg = f"Invalid hotkey: '{invalid_choice}' — valid: {valid_list}"
@@ -591,36 +593,36 @@ class BildGUI(ctk.CTk):
             text="Ready to transcribe", text_color=TXT))
         print(f"[GUI] Hotkey validation failed for: {invalid_choice}")
 
-    def toggle_beeps(self):
+    def toggle_beeps(self) -> None:
         v = bool(self.beep_switch.get())
         config.save_setting("BEEP_ON_START", v); config.save_setting("BEEP_ON_END", v)
 
-    def change_engine(self, choice):
+    def change_engine(self, choice: str) -> None:
         code = config.TRANSCRIPTION_ENGINES[choice]
         config.save_setting("TRANSCRIPTION_ENGINE", code)
         self.on_settings_change("engine", code)
         self._toggle_whisper_ui(code); self.update_engine_info()
 
-    def change_model(self, choice):
+    def change_model(self, choice: str) -> None:
         config.save_setting("WHISPER_MODEL", choice); self.on_settings_change("model", choice)
         self.refresh_download_button(); self.update_model_description(); self.update_engine_info()
 
-    def update_model_description(self):
+    def update_model_description(self) -> None:
         self.model_desc_label.configure(
             text=config.WHISPER_MODEL_DESCRIPTIONS.get(config.WHISPER_MODEL, ""))
 
-    def update_engine_info(self):
+    def update_engine_info(self) -> None:
         e = config.TRANSCRIPTION_ENGINE
         t = ("Engine: Google Speech (Online)" if e == "google"
              else f"Engine: Whisper AI · {config.WHISPER_MODEL}")
         if hasattr(self, "engine_info_label"): self.engine_info_label.configure(text=t)
 
-    def _toggle_whisper_ui(self, engine):
+    def _toggle_whisper_ui(self, engine: str) -> None:
         s = "normal" if engine == "whisper" else "disabled"
         self.model_option.configure(state=s); self.download_btn.configure(state=s)
         self.model_desc_label.configure(text_color=MUT if engine != "whisper" else MUT)
 
-    def download_whisper_model(self):
+    def download_whisper_model(self) -> None:
         # CRITICAL: Prevent multiple simultaneous downloads
         if hasattr(self, '_is_downloading') and self._is_downloading:
             print("[GUI] Download already in progress, ignoring duplicate request")
@@ -629,7 +631,7 @@ class BildGUI(ctk.CTk):
         self.download_btn.configure(text="Downloading...", state="disabled", fg_color="#666666")
         self.on_settings_change("download_model", None)
 
-    def on_download_progress(self, mb, status_text):
+    def on_download_progress(self, mb: float, status_text: str) -> None:
         """Called from poller thread; schedule a GUI update on the main thread."""
         def update():
             try:
@@ -643,7 +645,7 @@ class BildGUI(ctk.CTk):
         except Exception:
             pass
 
-    def on_zero_stt_progress(self, mb, status_text):
+    def on_zero_stt_progress(self, mb: float, status_text: str) -> None:
         """Called from poller thread; schedule a GUI update on the main thread."""
         def update():
             try:
@@ -657,7 +659,7 @@ class BildGUI(ctk.CTk):
         except Exception:
             pass
 
-    def refresh_download_button(self):
+    def refresh_download_button(self) -> None:
         try:
             if is_whisper_model_downloaded(config.WHISPER_MODEL):
                 self.download_btn.configure(text="✓ Downloaded", state="disabled",
@@ -667,43 +669,43 @@ class BildGUI(ctk.CTk):
                     fg_color=ACC, text_color="white")
         except OSError: pass
 
-    def toggle_startup(self):
+    def toggle_startup(self) -> None:
         v = self.startup_switch.get()
         config.save_setting("RUN_ON_STARTUP", v); set_run_on_startup(config.APP_NAME, v)
 
-    def toggle_auto_energy(self):
+    def toggle_auto_energy(self) -> None:
         v = bool(self.auto_energy_switch.get())
         config.save_setting("AUTO_ENERGY_THRESHOLD", v)
         self.on_settings_change("auto_energy", v)
 
-    def change_pre_roll(self, choice):
+    def change_pre_roll(self, choice: str) -> None:
         v = float(choice.replace("s", ""))
         config.save_setting("PRE_ROLL_SECONDS", v)
         self.on_settings_change("pre_roll", v)
 
-    def change_post_roll(self, choice):
+    def change_post_roll(self, choice: str) -> None:
         v = float(choice.replace("s", ""))
         config.save_setting("POST_ROLL_SECONDS", v)
         self.on_settings_change("post_roll", v)
 
-    def change_longpress(self, choice):
+    def change_longpress(self, choice: str) -> None:
         v = int(choice.replace("ms", "")) / 1000.0
         config.save_setting("LONG_PRESS_THRESHOLD", v)
         self.on_settings_change("longpress", v)
 
-    def toggle_auto_punct(self):
+    def toggle_auto_punct(self) -> None:
         v = bool(self.auto_punct_switch.get())
         config.save_setting("AUTO_PUNCTUATION", v)
 
-    def toggle_capitalize(self):
+    def toggle_capitalize(self) -> None:
         v = bool(self.capitalize_switch.get())
         config.save_setting("CAPITALIZE_FIRST", v)
 
-    def toggle_spoken_commands(self):
+    def toggle_spoken_commands(self) -> None:
         v = bool(self.spoken_cmd_switch.get())
         config.save_setting("SPOKEN_COMMANDS", v)
 
-    def download_zero_stt(self):
+    def download_zero_stt(self) -> None:
         """Trigger zero-stt download via main app callback."""
         if getattr(self, '_zero_stt_downloading', False):
             return
@@ -712,7 +714,7 @@ class BildGUI(ctk.CTk):
         self.zero_stt_status.configure(text="This can take a few minutes...")
         self.on_settings_change("download_zero_stt", None)
 
-    def on_zero_stt_complete(self, success):
+    def on_zero_stt_complete(self, success: bool) -> None:
         """Called from main app after zero-stt download finishes."""
         self._zero_stt_downloading = False
         if success:
@@ -722,7 +724,7 @@ class BildGUI(ctk.CTk):
         self.refresh_zero_stt_button()
         self.after(4000, lambda: self.zero_stt_status.configure(text="", text_color=MUT))
 
-    def refresh_zero_stt_button(self):
+    def refresh_zero_stt_button(self) -> None:
         try:
             from .audio_engine import is_zero_stt_downloaded
             if is_zero_stt_downloaded():
@@ -734,7 +736,7 @@ class BildGUI(ctk.CTk):
         except Exception:
             pass
 
-    def reset_all_settings(self):
+    def reset_all_settings(self) -> None:
         """Reset all settings to defaults, then sync GUI controls.
 
         Avoids triggering the change_* callbacks (which would each write to
@@ -769,13 +771,13 @@ class BildGUI(ctk.CTk):
         self.on_settings_change("language", config.DEFAULT_LANGUAGE)
 
     # ── Window ────────────────────────────────────────────────────────────
-    def hide_window(self): self.withdraw()
-    def on_close_clicked(self): self.hide_window()
-    def show_window(self):
+    def hide_window(self) -> None: self.withdraw()
+    def on_close_clicked(self) -> None: self.hide_window()
+    def show_window(self) -> None:
         self.deiconify(); self.lift(); self.focus_force()
         # Re-raise the correct view after restore
         self.after(50, self._on_restore)
 
 
-def start_gui(on_settings_change, on_exit):
+def start_gui(on_settings_change: Callable[..., None], on_exit: Callable[..., None]) -> BildGUI:
     return BildGUI(on_settings_change, on_exit)

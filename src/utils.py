@@ -2,6 +2,7 @@ import logging
 import logging.handlers
 import os
 import sys
+from typing import Any, Optional
 
 
 class _StreamToLogger:
@@ -12,13 +13,13 @@ class _StreamToLogger:
     PyInstaller --windowed mode where stdout/stderr are detached), writes
     only go to the logger.
     """
-    def __init__(self, original_stream, logger, level):
+    def __init__(self, original_stream: Optional[Any], logger: logging.Logger, level: int) -> None:
         self._original = original_stream
         self._logger = logger
         self._level = level
         self._buffer = ""
 
-    def write(self, message):
+    def write(self, message: str) -> None:
         if not message:
             return
         # Mirror to original stream if attached (console / IDE redirection)
@@ -38,14 +39,14 @@ class _StreamToLogger:
                 except Exception:
                     pass
 
-    def flush(self):
+    def flush(self) -> None:
         if self._original is not None:
             try:
                 self._original.flush()
             except Exception:
                 pass
 
-    def isatty(self):
+    def isatty(self) -> bool:
         if self._original is None:
             return False
         try:
@@ -53,13 +54,14 @@ class _StreamToLogger:
         except Exception:
             return False
 
-    def fileno(self):
+    def fileno(self) -> int:
         if self._original is None:
             raise OSError("no fileno (stream is detached)")
         return self._original.fileno()
 
 
-def setup_logging(app_name="Bolo", log_dir=None, max_bytes=10 * 1024 * 1024, backup_count=3):
+def setup_logging(app_name: str = "Bolo", log_dir: Optional[str] = None,
+                  max_bytes: int = 10 * 1024 * 1024, backup_count: int = 3) -> logging.Logger:
     """Rotating file + console logging. Also mirrors stdout/stderr to the
     log file so legacy `print()` calls land in the same place.
 
@@ -111,13 +113,13 @@ def setup_logging(app_name="Bolo", log_dir=None, max_bytes=10 * 1024 * 1024, bac
     return logger
 
 
-def get_logger(name=None):
+def get_logger(name: Optional[str] = None) -> logging.Logger:
     """Get a child logger for a specific component."""
     from . import config
     parent = logging.getLogger(config.APP_NAME)
     return parent.getChild(name) if name else parent
 
-def get_startup_key():
+def get_startup_key() -> Optional[Any]:
     if sys.platform != "win32":
         return None
     try:
@@ -127,7 +129,7 @@ def get_startup_key():
         print(f"Error opening startup registry key: {e}")
         return None
 
-def set_run_on_startup(app_name, enable=True):
+def set_run_on_startup(app_name: str, enable: bool = True) -> bool:
     if sys.platform != "win32":
         return False
     import winreg
@@ -154,7 +156,7 @@ def set_run_on_startup(app_name, enable=True):
         return False
 
 
-def is_run_on_startup(app_name):
+def is_run_on_startup(app_name: str) -> bool:
     if sys.platform != "win32":
         return False
     import winreg
@@ -172,7 +174,7 @@ def is_run_on_startup(app_name):
         if key: winreg.CloseKey(key)
         return False
 
-def purge_old_history(days=7):
+def purge_old_history(days: int = 7) -> None:
     """Deletes history entries older than `days` days. Called at startup."""
     from datetime import datetime, timedelta
 

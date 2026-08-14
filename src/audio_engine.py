@@ -11,13 +11,15 @@ import speech_recognition as sr
 from indic_transliteration import sanscript
 from indic_transliteration.sanscript import transliterate
 
+from typing import Any, Optional, Callable
+
 from . import config
 
 # ─── Hinglish Data: loaded from external JSON ────────────────────────────
 # Data file is co-located with this module.
 _HINGLISH_DATA_PATH = os.path.join(os.path.dirname(__file__), "hinglish_data.json")
 
-def _load_hinglish_data():
+def _load_hinglish_data() -> dict[str, Any]:
     """Load Hinglish normalization data from JSON and compile regex patterns."""
     path = _HINGLISH_DATA_PATH
     with open(path, encoding="utf-8") as f:
@@ -65,7 +67,7 @@ _RE_ITRANS_MARKS = re.compile(r'[\^~`]')
 _RE_DEVA_LEAK = re.compile(r'[ऀ-ॿ]')
 
 
-def _detect_device():
+def _detect_device() -> tuple[str, str]:
     """
     Advanced Hardware Detection for Bolo:
     Detects CUDA, checks VRAM, and sets optimal quantization.
@@ -122,30 +124,34 @@ class AudioEngine:
         - Transcription settings (engine, language, model)
         - Audio preprocessing (VAD_THRESHOLD, DIGITAL_GAIN, etc.)
     """
-    def __init__(self):
-        self.recognizer = sr.Recognizer()
-        self.is_recording = False
-        self._lock = threading.Lock()
-        self.audio_frames = []
+    def __init__(self) -> None:
+        self.recognizer: sr.Recognizer = sr.Recognizer()
+        self.is_recording: bool = False
+        self._lock: threading.Lock = threading.Lock()
+        self.audio_frames: list[bytes] = []
 
-        self.p = None
-        self.format = pyaudio.paInt16
-        self.channels = config.CHANNELS
-        self.rate = config.SAMPLE_RATE
-        self.chunk_size = config.CHUNK_SIZE
-        self.sample_width = 2
+        self.p: Optional[pyaudio.PyAudio] = None
+        self.format: int = pyaudio.paInt16
+        self.channels: int = config.CHANNELS
+        self.rate: int = config.SAMPLE_RATE
+        self.chunk_size: int = config.CHUNK_SIZE
+        self.sample_width: int = 2
 
-        self.current_volume = 0
-        self._stop_event = threading.Event()
-        self._record_thread = None
+        self.current_volume: float = 0
+        self._stop_event: threading.Event = threading.Event()
+        self._record_thread: Optional[threading.Thread] = None
 
-        self._whisper_model = None
-        self._zero_stt_model = None
+        self._whisper_model: Optional[Any] = None
+        self._zero_stt_model: Optional[Any] = None
+        self._device: str = ""
+        self._compute_type: str = ""
         self._device, self._compute_type = _detect_device()
+
+        self.stream: Optional[Any] = None
         print(f"[Audio] Device: {self._device}, Compute: {self._compute_type}")
 
         # Pre-roll circular buffer (spec-compliant: 0.5s)
-        self.pre_roll_buffer = collections.deque(
+        self.pre_roll_buffer: collections.deque[bytes] = collections.deque(
             maxlen=int(self.rate / self.chunk_size * config.PRE_ROLL_SECONDS)
         )
         self._stop_engine_event = threading.Event()
@@ -156,7 +162,7 @@ class AudioEngine:
         # Non-blocking noise calibration (avoids 0.8s startup delay)
         threading.Thread(target=self._adjust_noise, daemon=True).start()
 
-    def _init_audio(self):
+    def _init_audio(self) -> None:
         try:
             self.kill_stream()
             self.p = pyaudio.PyAudio()
@@ -166,7 +172,7 @@ class AudioEngine:
         except Exception as e:
             print(f"[Audio] Engine Init Error: {e}")
 
-    def _initialize_stream(self):
+    def _initialize_stream(self) -> None:
         """Initialize audio stream with error handling and auto-recovery."""
         try:
             self.stream = self.p.open(
@@ -200,7 +206,7 @@ class AudioEngine:
                 print(f"[Audio] Stream recovery failed: {e2}")
                 raise RuntimeError(f"Cannot initialize audio stream: {e2}")
 
-    def _adjust_noise(self):
+    def _adjust_noise(self) -> None:
         try:
             print("Calibrating microphone...")
             with sr.Microphone(sample_rate=self.rate) as source:
@@ -209,13 +215,13 @@ class AudioEngine:
         except Exception as e:
             print(f"[Audio] Noise calibration error: {e}")
 
-    def _start_bg_listener(self):
+    def _start_bg_listener(self) -> None:
         if self._bg_listener_thread is None or not self._bg_listener_thread.is_alive():
             self._stop_engine_event.clear()
             self._bg_listener_thread = threading.Thread(target=self._bg_listener_loop, daemon=True)
             self._bg_listener_thread.start()
 
-    def _bg_listener_loop(self):
+    def _bg_listener_loop(self) -> None:
         """Always running background thread to fill pre-roll buffer and show volume."""
         while not self._stop_engine_event.is_set():
             if not self.is_recording:
@@ -246,7 +252,7 @@ class AudioEngine:
     # ------------------------------------------------------------------
     #  Whisper Helpers
     # ------------------------------------------------------------------
-    def _get_whisper_model(self):
+    def _get_whisper_model(self) -> Any:
         if self._whisper_model is None:
             model_size = config.WHISPER_MODEL
             print(f"[Audio] Loading Whisper model '{model_size}'...")
@@ -263,7 +269,7 @@ class AudioEngine:
                 raise
         return self._whisper_model
 
-    def _ensure_zero_stt_model(self, progress_cb=None):
+    def _ensure_zero_stt_model(self, progress_cb: Optional[Callable[[int, str], None]] = None) -> str:
         """Ensure shunyalabs/zero-stt-hinglish is available as a CTranslate2 model.
 
         Steps:
@@ -315,7 +321,7 @@ class AudioEngine:
 
         return model_path
 
-    def _get_hf_cache_path(self):
+    def _get_hf_cache_path(self) -> Optional[str]:
         """Return the resolved local path of shunyalabs/zero-stt-hinglish in HF cache."""
         try:
             import os
@@ -335,7 +341,7 @@ class AudioEngine:
             print(f"[Audio] HF cache path lookup failed: {e}")
         return None
 
-    def _get_zero_stt_model(self):
+    def _get_zero_stt_model(self) -> Any:
         """Lazy-load the zero-stt model. Each call may retry — no permanent
         failure cache (network/disk issues can heal between attempts).
         """
@@ -356,7 +362,7 @@ class AudioEngine:
             self._zero_stt_model = None
             raise RuntimeError(f"Failed to load zero-stt: {e}")
 
-    def download_zero_stt_now(self, progress_cb=None):
+    def download_zero_stt_now(self, progress_cb: Optional[Callable[[int, str], None]] = None) -> bool:
         """Trigger zero-stt download + conversion explicitly (used by GUI).
 
         progress_cb(mb, status_text) is invoked from a poller thread during
@@ -383,7 +389,7 @@ class AudioEngine:
             if poller:
                 poller.join(timeout=2.0)
 
-    def _transcribe_zero_stt(self, raw_data):
+    def _transcribe_zero_stt(self, raw_data: bytes) -> str:
         audio_np = self._preprocess_audio(raw_data, self.rate, for_whisper=True)
         model = self._get_zero_stt_model()
 
@@ -421,7 +427,7 @@ class AudioEngine:
         return text
 
     @staticmethod
-    def _clean_hinglish(text):
+    def _clean_hinglish(text: Optional[str]) -> str:
         """Polish Roman Hinglish text: strip prompt artifacts, normalize spelling,
         fix conjugation suffixes, drop stray trailing vowels from ASR output.
 
@@ -496,12 +502,12 @@ class AudioEngine:
         return ' '.join(out).strip()
 
 
-    def reload_zero_stt_model(self):
+    def reload_zero_stt_model(self) -> None:
         self._zero_stt_model = None
         print("[Audio] zero-stt model will be reloaded on next use.")
 
     @staticmethod
-    def _resample_audio(audio_np, orig_rate, target_rate):
+    def _resample_audio(audio_np: np.ndarray, orig_rate: int, target_rate: int) -> np.ndarray:
         """Resample using linear interpolation (good enough for speech)."""
         if orig_rate == target_rate:
             return audio_np
@@ -511,7 +517,7 @@ class AudioEngine:
         return np.interp(indices, np.arange(len(audio_np)), audio_np)
 
     @staticmethod
-    def _high_pass_filter(data, cutoff=100, fs=16000):
+    def _high_pass_filter(data: np.ndarray, cutoff: float = 100, fs: int = 16000) -> np.ndarray:
         """First-order IIR high-pass filter.
 
         Recurrence:  y[n] = alpha * (y[n-1] + x[n] - x[n-1])
@@ -541,7 +547,7 @@ class AudioEngine:
             return y
 
     @staticmethod
-    def _trim_silence(audio_np, threshold=None, frame_length=512):
+    def _trim_silence(audio_np: np.ndarray, threshold: Optional[float] = None, frame_length: int = 512) -> np.ndarray:
         # Use configurable VAD_THRESHOLD from config
         if threshold is None:
             threshold = config.VAD_THRESHOLD
@@ -565,7 +571,7 @@ class AudioEngine:
         end_idx = min(len(audio_np), (last_active + 7) * frame_length)
         return audio_np[start_idx:end_idx]
 
-    def _preprocess_audio(self, raw_data, sample_rate, for_whisper=False):
+    def _preprocess_audio(self, raw_data: bytes, sample_rate: int, for_whisper: bool = False) -> Any:
         """Audio preprocessing pipeline:
 
             1. int16 → float32 normalize
@@ -621,7 +627,7 @@ class AudioEngine:
     # ------------------------------------------------------------------
     #  Recording
     # ------------------------------------------------------------------
-    def start_recording(self):
+    def start_recording(self) -> None:
         print("[Audio] start_recording() called")
         with self._lock:
             if self.is_recording:
@@ -667,7 +673,7 @@ class AudioEngine:
             self._record_thread.start()
             print("[Audio] Record thread started")
 
-    def _record_loop(self):
+    def _record_loop(self) -> None:
         """Stream read loop. Holds lock briefly to snapshot stream ref so
         kill_stream() can't null it under us between is_active() and read().
         """
@@ -704,7 +710,7 @@ class AudioEngine:
         print(f"[Audio] _record_loop() ended ({frame_count} frames)")
         self.current_volume = 0
 
-    def stop_recording(self, language=config.DEFAULT_LANGUAGE):
+    def stop_recording(self, language: str = config.DEFAULT_LANGUAGE) -> str:
         print(f"[Audio] stop_recording() called (language={language})")
         # 1. Post-roll: Wait for 0.5s before actually stopping the capture
         # This ensures the ending words are not cut off.
@@ -731,13 +737,16 @@ class AudioEngine:
     # ------------------------------------------------------------------
     #  Processing
     # ------------------------------------------------------------------
-    def _process_audio(self, language):
+    def _process_audio(self, language: str) -> str:
         print("[Audio] _process_audio() called")
         raw_data = b"".join(self.audio_frames)
-        self.audio_frames = []
+        # DON'T clear audio_frames here — preserve them if transcription fails
+        # so a retry or diagnostic can re-use the data. Cleared on next
+        # start_recording() instead.
 
         if not raw_data:
             print("[Audio] Raw audio data is empty.")
+            self.audio_frames = []
             return ""
         print(f"[Audio] Processing {len(raw_data)} bytes of audio data")
 
@@ -806,7 +815,7 @@ class AudioEngine:
         return self._transcribe_google(raw_data, google_lang)
 
     @staticmethod
-    def _apply_spoken_commands(text):
+    def _apply_spoken_commands(text: Optional[str]) -> Optional[str]:
         """Replace spoken punctuation/formatting commands with their symbols.
 
         Supports English and a few common Hindi phrases. Examples:
@@ -836,7 +845,7 @@ class AudioEngine:
         return text
 
     @staticmethod
-    def _post_process_transcription(text):
+    def _post_process_transcription(text: Optional[str]) -> str:
         """Professional finish: dedup punctuation, normalize spaces,
         capitalize first letter, append terminal punctuation if missing.
 
@@ -889,14 +898,14 @@ class AudioEngine:
         return text
 
     @staticmethod
-    def _fix_hinglish_spelling(text):
+    def _fix_hinglish_spelling(text: Optional[str]) -> str:
         """Legacy alias — _clean_hinglish now does everything in one pass.
 
         Kept for any external callers; safe to call after _clean_hinglish.
         """
         return AudioEngine._clean_hinglish(text)
 
-    def _transcribe_whisper_hinglish_fallback(self, raw_data):
+    def _transcribe_whisper_hinglish_fallback(self, raw_data: bytes) -> str:
         """
         Hinglish fallback using forced Hindi transcription + Romanization.
         Uses large-v3-turbo when zero-stt is unavailable or fails.
@@ -933,7 +942,7 @@ class AudioEngine:
         print(f"[Audio] Whisper Hinglish (Romanized): {text}")
         return text
 
-    def _transcribe_whisper_raw(self, raw_data, language=None, hinglish_prompt=False):
+    def _transcribe_whisper_raw(self, raw_data: bytes, language: Optional[str] = None, hinglish_prompt: bool = False) -> str:
         audio_np = self._preprocess_audio(raw_data, self.rate, for_whisper=True)
 
         if len(audio_np) < int(16000 * 0.3):
@@ -963,7 +972,7 @@ class AudioEngine:
         text = " ".join([segment.text.strip() for segment in segments]).strip()
         return self._filter_whisper_hallucinations(text)
 
-    def _transcribe_whisper(self, raw_data, language):
+    def _transcribe_whisper(self, raw_data: bytes, language: str) -> str:
         text = self._transcribe_whisper_raw(raw_data, language)
 
         if text:
@@ -976,7 +985,7 @@ class AudioEngine:
     # ------------------------------------------------------------------
     #  Whisper Hallucination Filtering
     # ------------------------------------------------------------------
-    def _filter_whisper_hallucinations(self, text):
+    def _filter_whisper_hallucinations(self, text: Optional[str]) -> Optional[str]:
         """
         Cleans up common Whisper hallucinations and ensures Devanagari text
         is converted to Roman Hinglish using the transliteration logic.
@@ -1000,7 +1009,7 @@ class AudioEngine:
         return AudioEngine._fix_hinglish_spelling(text)
 
     @staticmethod
-    def _strip_arabic_to_latin(text):
+    def _strip_arabic_to_latin(text: str) -> str:
         mapping = {
             'ا': 'a', 'ب': 'b', 'پ': 'p', 'ت': 't', 'ٹ': 't', 'ث': 's',
             'ج': 'j', 'چ': 'ch', 'ح': 'h', 'خ': 'kh', 'د': 'd', 'ڈ': 'd',
@@ -1021,7 +1030,7 @@ class AudioEngine:
                 result.append(char)
         return ''.join(result)
 
-    def _transcribe_google(self, raw_data, language, skip_history=False):
+    def _transcribe_google(self, raw_data: bytes, language: str, skip_history: bool = False) -> str:
         processed_data = self._preprocess_audio(raw_data, self.rate, for_whisper=False)
         audio = sr.AudioData(processed_data, 16000, self.sample_width)
 
@@ -1079,7 +1088,7 @@ class AudioEngine:
         return text
 
 
-    def log_history(self, text, lang):
+    def log_history(self, text: str, lang: str) -> None:
         """Append a transcription entry to history.json atomically.
 
         Uses config.atomic_json_* under per-path RLock — safe for concurrent
@@ -1101,11 +1110,11 @@ class AudioEngine:
             if config.atomic_json_write(history_path, history):
                 print(f"[Audio] History updated ({len(history)} entries)")
 
-    def reload_whisper_model(self):
+    def reload_whisper_model(self) -> None:
         self._whisper_model = None
         print("[Audio] Whisper model will be reloaded on next use.")
 
-    def download_model_now(self, progress_cb=None):
+    def download_model_now(self, progress_cb: Optional[Callable[[int, str], None]] = None) -> bool:
         """Download Whisper model. progress_cb(mb_downloaded, status_text) is
         called from a poller thread roughly every 500ms during download.
         """
@@ -1142,12 +1151,12 @@ class AudioEngine:
                 poller.join(timeout=2.0)
 
     @staticmethod
-    def _hf_cache_root():
+    def _hf_cache_root() -> str:
         """Root of the HuggingFace Hub cache (where snapshots land)."""
         return os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
 
     @staticmethod
-    def _dir_size_mb(path):
+    def _dir_size_mb(path: str) -> float:
         """Total size of a directory tree in MB. Safe for missing dirs."""
         if not os.path.isdir(path):
             return 0.0
@@ -1161,7 +1170,7 @@ class AudioEngine:
         return total / (1024 * 1024)
 
     @staticmethod
-    def _poll_download_progress(watch_dir, stop_event, callback, label):
+    def _poll_download_progress(watch_dir: str, stop_event: threading.Event, callback: Callable[[float, str], None], label: str) -> None:
         """Periodically report download progress by polling directory size."""
         baseline = AudioEngine._dir_size_mb(watch_dir)
         while not stop_event.is_set():
@@ -1171,7 +1180,7 @@ class AudioEngine:
                 callback(delta, f"{label}: {delta:.1f} MB downloaded...")
             stop_event.wait(0.5)
 
-    def kill_stream(self):
+    def kill_stream(self) -> None:
         """Gracefully shut down audio stream with verification and retry."""
         self._stop_engine_event.set()
         try:
@@ -1231,7 +1240,7 @@ class AudioEngine:
         except Exception as e:
             print(f"[Audio] Unexpected error in kill_stream: {e}")
 
-    def reconnect_mic(self):
+    def reconnect_mic(self) -> bool:
         """Surgically re-initializes audio capture without restarting the app."""
         print("[Audio] Attempting mic reconnection...")
         try:
@@ -1244,7 +1253,7 @@ class AudioEngine:
             print(f"[Audio] Reconnection failed: {e}")
             return False
 
-    def check_health(self):
+    def check_health(self) -> None:
         """Health check for the background listener."""
         if self._bg_listener_thread and not self._bg_listener_thread.is_alive():
             print("[Audio] Background listener died. Restarting...")
@@ -1267,7 +1276,7 @@ class AudioEngine:
     _DEVA_PRECLEAN_TABLE = str.maketrans(_DEVA_PRECLEAN)
 
     @staticmethod
-    def _transliterate_to_roman(text):
+    def _transliterate_to_roman(text: str) -> str:
         """Devanagari (Hindi script) -> natural Hinglish Roman via ITRANS.
 
         Pre-cleans Devanagari marks (chandra vowels, anusvara, nukta) that

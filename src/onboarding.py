@@ -11,6 +11,7 @@ Shown only when config.ONBOARDING_COMPLETED is False. Sets the flag on
 """
 
 import customtkinter as ctk
+from typing import Any, Callable, Optional
 
 from . import config
 
@@ -25,14 +26,14 @@ BDR = config.BORDER_COLOR
 FONT = config.FONT_FAMILY
 
 
-def _f(sz, w="normal"):
+def _f(sz: int, w: str = "normal") -> Any:
     return ctk.CTkFont(family=FONT, size=sz, weight=w)
 
 
 class OnboardingWizard(ctk.CTkToplevel):
     """Modal first-run wizard. Parent is the main BildGUI window."""
 
-    def __init__(self, parent, audio_engine):
+    def __init__(self, parent: Any, audio_engine: Any) -> None:
         super().__init__(parent)
         self.parent = parent
         self.audio_engine = audio_engine
@@ -99,7 +100,7 @@ class OnboardingWizard(ctk.CTkToplevel):
         self.protocol("WM_DELETE_WINDOW", self._on_skip)
 
     # ── Page navigation ────────────────────────────────────────────────────
-    def _show_page(self, idx):
+    def _show_page(self, idx: int) -> None:
         # Stop any background polling from the previous page
         self._volume_anim_running = False
 
@@ -113,21 +114,21 @@ class OnboardingWizard(ctk.CTkToplevel):
         self._back_btn.configure(state="normal" if idx > 0 else "disabled")
         self._next_btn.configure(text="Finish" if idx == len(self._pages) - 1 else "Next  >")
 
-    def _on_next(self):
+    def _on_next(self) -> None:
         if self._page_idx == len(self._pages) - 1:
             self._finish()
         else:
             self._show_page(self._page_idx + 1)
 
-    def _on_back(self):
+    def _on_back(self) -> None:
         if self._page_idx > 0:
             self._show_page(self._page_idx - 1)
 
-    def _on_skip(self):
+    def _on_skip(self) -> None:
         # User dismissed wizard — mark complete so it doesn't reopen
         self._finish()
 
-    def _finish(self):
+    def _finish(self) -> None:
         config.save_setting("ONBOARDING_COMPLETED", True)
         if self._chosen_lang and self._chosen_lang != config.DEFAULT_LANGUAGE:
             config.save_setting("DEFAULT_LANGUAGE", self._chosen_lang)
@@ -145,7 +146,7 @@ class OnboardingWizard(ctk.CTkToplevel):
         self.destroy()
 
     # ── Page 1: Welcome ───────────────────────────────────────────────────
-    def _build_welcome(self):
+    def _build_welcome(self) -> None:
         f = ctk.CTkFrame(self._page_container, fg_color=BG)
         f.pack(fill="both", expand=True, padx=40, pady=(40, 20))
 
@@ -168,7 +169,7 @@ class OnboardingWizard(ctk.CTkToplevel):
                      justify="left", anchor="w").pack(anchor="w")
 
     # ── Page 2: Microphone check ──────────────────────────────────────────
-    def _build_mic(self):
+    def _build_mic(self) -> None:
         f = ctk.CTkFrame(self._page_container, fg_color=BG)
         f.pack(fill="both", expand=True, padx=40, pady=(40, 20))
 
@@ -189,7 +190,7 @@ class OnboardingWizard(ctk.CTkToplevel):
         self._volume_anim_running = True
         self._animate_volume()
 
-    def _animate_volume(self):
+    def _animate_volume(self) -> None:
         """Pulled from audio_engine.current_volume; refreshed at ~30 Hz."""
         if not self._volume_anim_running:
             return
@@ -224,7 +225,7 @@ class OnboardingWizard(ctk.CTkToplevel):
             self.after(33, self._animate_volume)
 
     # ── Page 3: Language ──────────────────────────────────────────────────
-    def _build_language(self):
+    def _build_language(self) -> None:
         f = ctk.CTkFrame(self._page_container, fg_color=BG)
         f.pack(fill="both", expand=True, padx=40, pady=(40, 20))
 
@@ -248,17 +249,17 @@ class OnboardingWizard(ctk.CTkToplevel):
         ctk.CTkLabel(f, text="Hinglish is recommended for Hindi+English mix.",
                      font=_f(10), text_color=MUT).pack(anchor="w", pady=(12, 0))
 
-    def _lang_label_for(self, code):
+    def _lang_label_for(self, code: str) -> str:
         for label, c in config.SUPPORTED_LANGUAGES.items():
             if c == code:
                 return label
         return next(iter(config.SUPPORTED_LANGUAGES.keys()))
 
-    def _on_lang_pick(self, label):
+    def _on_lang_pick(self, label: str) -> None:
         self._chosen_lang = config.SUPPORTED_LANGUAGES.get(label, self._chosen_lang)
 
     # ── Page 4: Practice ──────────────────────────────────────────────────
-    def _build_practice(self):
+    def _build_practice(self) -> None:
         f = ctk.CTkFrame(self._page_container, fg_color=BG)
         f.pack(fill="both", expand=True, padx=40, pady=(40, 20))
 
@@ -284,7 +285,7 @@ class OnboardingWizard(ctk.CTkToplevel):
                      font=_f(11), text_color=MUT).pack(anchor="w", pady=(16, 0))
 
 
-def maybe_show(parent_gui, audio_engine):
+def maybe_show(parent_gui: Any, audio_engine: Any) -> Optional[OnboardingWizard]:
     """Open the wizard on first launch. No-op if already completed."""
     if config.ONBOARDING_COMPLETED:
         return None

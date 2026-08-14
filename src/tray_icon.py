@@ -1,6 +1,7 @@
 import math
 import threading
 import tkinter as tk
+from typing import Any, Callable, Optional
 
 import pystray
 from PIL import Image, ImageDraw
@@ -9,7 +10,7 @@ from . import config
 
 
 class TrayIcon:
-    def __init__(self, on_exit, on_lang_change):
+    def __init__(self, on_exit: Callable[..., None], on_lang_change: Callable[..., None]) -> None:
         self.on_exit = on_exit
         self.on_lang_change = on_lang_change
         self.on_show_gui = None
@@ -30,7 +31,7 @@ class TrayIcon:
         self._tk_thread = None
         self._update_scheduled = False
 
-    def create_icon_image(self, color):
+    def create_icon_image(self, color: str) -> Any:
         image = Image.new('RGBA', (64, 64), color=(0, 0, 0, 0))
         dc = ImageDraw.Draw(image)
         dc.rectangle((27, 8, 37, 56), fill=color)
@@ -40,7 +41,7 @@ class TrayIcon:
         dc.rectangle((53, 28, 63, 36), fill=color)
         return image
 
-    def _setup_menu(self):
+    def _setup_menu(self) -> Any:
         lang_menu = []
         for label, code in config.SUPPORTED_LANGUAGES.items():
             lang_menu.append(pystray.MenuItem(
@@ -58,11 +59,11 @@ class TrayIcon:
             pystray.MenuItem("Exit", self._on_exit_clicked)
         )
 
-    def _on_dashboard_clicked(self, icon, item):
+    def _on_dashboard_clicked(self, icon: Any, item: Any) -> None:
         if self.on_show_gui:
             self.on_show_gui()
 
-    def _on_reconnect_clicked(self, icon, item):
+    def _on_reconnect_clicked(self, icon: Any, item: Any) -> None:
         if self.on_reconnect:
             success = self.on_reconnect()
             if success:
@@ -70,13 +71,13 @@ class TrayIcon:
             else:
                 print("[Tray] Mic reconnection failed")
 
-    def _make_lang_setter(self, label, code):
-        def set_lang(icon, item):
+    def _make_lang_setter(self, label: str, code: str) -> Callable[[Any, Any], None]:
+        def set_lang(icon: Any, item: Any) -> None:
             self.current_lang_label = label
             self.on_lang_change(code)
         return set_lang
 
-    def _on_exit_clicked(self, icon, item):
+    def _on_exit_clicked(self, icon: Any, item: Any) -> None:
         try:
             self.icon.stop()
         except Exception:
@@ -86,7 +87,7 @@ class TrayIcon:
         except Exception as e:
             print(f"Exit error: {e}")
 
-    def run(self):
+    def run(self) -> None:
         self.icon = pystray.Icon(
             config.APP_NAME,
             self.create_icon_image(config.ACCENT_COLOR),
@@ -96,7 +97,7 @@ class TrayIcon:
         self._tk_thread.start()
         self.icon.run()
 
-    def _run_tk(self):
+    def _run_tk(self) -> None:
         try:
             self._tk_root = tk.Tk()
             self._tk_root.withdraw()
@@ -125,7 +126,7 @@ class TrayIcon:
         except Exception as e:
             print(f"Tray icon error: {e}")
 
-    def _update_waveform(self):
+    def _update_waveform(self) -> None:
         try:
             if self._tk_root and self._status_visible:
                 self._canvas.delete("all")
@@ -161,24 +162,24 @@ class TrayIcon:
                 except RuntimeError:
                     pass
 
-    def show_status(self, text, color=None):
+    def show_status(self, text: str, color: Optional[str] = None) -> None:
         with self._lock:
             self._status_visible = True
             if self._tk_root:
                 self._tk_root.after(0, self._tk_root.deiconify)
 
-    def hide_status(self):
+    def hide_status(self) -> None:
         with self._lock:
             self._status_visible = False
             if self._tk_root:
                 self._tk_root.after(0, self._tk_root.withdraw)
 
-    def set_icon_state(self, recording=False):
+    def set_icon_state(self, recording: bool = False) -> None:
         color = config.RECORDING_COLOR if recording else config.ACCENT_COLOR
         if self.icon:
             self.icon.icon = self.create_icon_image(color)
 
-    def update_language_state(self, lang_code):
+    def update_language_state(self, lang_code: str) -> None:
         with self._lock:
             for label, code in config.SUPPORTED_LANGUAGES.items():
                 if code == lang_code:
