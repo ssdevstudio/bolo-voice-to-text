@@ -127,6 +127,7 @@ class BoloApp:
         self.monitor = HotkeyMonitor(self.start_recording, self.stop_recording)
         self._quitting = False
         self._pending_hwnd = None
+        self._processing_thread: threading.Thread | None = None
 
     def on_settings_change(self, key, value):
         if key == 'language':
@@ -215,6 +216,7 @@ class BoloApp:
         self._schedule_gui(lambda: self.tray.set_icon_state(recording=False))
         t = threading.Thread(target=self._process_and_inject, args=(hwnd,))
         t.daemon = True
+        self._processing_thread = t
         t.start()
 
     def _process_and_inject(self, hwnd):
@@ -308,6 +310,12 @@ class BoloApp:
             self.gui.after(0, self.gui.quit)
         except Exception as e:
             print(f"GUI shutdown error: {e}")
+        # Wait for any in-flight transcription/injection thread to finish
+        # so it doesn't access freed resources during shutdown.
+        if self._processing_thread and self._processing_thread.is_alive():
+            self._processing_thread.join(timeout=5.0)
+            if self._processing_thread.is_alive():
+                print("[Main] Transcription thread still alive after 5s shutdown timeout")
         sys.exit(0)
 
     def show_window(self):
