@@ -343,7 +343,7 @@ class BildGUI(ctk.CTk):
             dropdown_fg_color=SB, dropdown_hover_color=CRD2,
             dropdown_text_color=TXT, text_color=TXT,
             corner_radius=8, font=_f(12), dropdown_font=_f(11), width=220)
-        self.lang_option.set(next((l for l,c in config.SUPPORTED_LANGUAGES.items()
+        self.lang_option.set(next((label for label, c in config.SUPPORTED_LANGUAGES.items()
                                     if c==config.DEFAULT_LANGUAGE), "English (India)"))
         self.lang_option.pack(side="right", pady=8)
         return v
@@ -443,7 +443,7 @@ class BildGUI(ctk.CTk):
 
         # ── Engine card ───────────────────────────────────────────────────
         c2 = grp("TRANSCRIPTION ENGINE")
-        eng_def = next((l for l,c in config.TRANSCRIPTION_ENGINES.items()
+        eng_def = next((label for label, c in config.TRANSCRIPTION_ENGINES.items()
                          if c==config.TRANSCRIPTION_ENGINE),
                         list(config.TRANSCRIPTION_ENGINES)[0])
         r4 = row(c2, "Engine", "Google Speech (online) or Whisper AI (local, offline).", last=True)
@@ -471,7 +471,7 @@ class BildGUI(ctk.CTk):
 
         # ── Hinglish model card ─────────────────────────────────────────
         c3b = grp("HINGLISH MODEL (Zero-STT)")
-        r5b = row(c3b, "Specialized Hinglish ASR", "Optimized model for Hindi-English code-switching. Used automatically when language is Hinglish + Whisper engine.", last=True)
+        row(c3b, "Specialized Hinglish ASR", "Optimized model for Hindi-English code-switching. Used automatically when language is Hinglish + Whisper engine.", last=True)
         zdl = ctk.CTkFrame(c3b, fg_color="transparent")
         zdl.pack(fill="x", padx=18, pady=(0, 14))
         self.zero_stt_btn = ctk.CTkButton(zdl, text="Download", width=140,
@@ -780,7 +780,7 @@ class BildGUI(ctk.CTk):
         (self.capitalize_switch.select if config.CAPITALIZE_FIRST else self.capitalize_switch.deselect)()
         (self.spoken_cmd_switch.select if config.SPOKEN_COMMANDS else self.spoken_cmd_switch.deselect)()
         self.update_ui_language(config.DEFAULT_LANGUAGE)
-        eng = next((l for l, c in config.TRANSCRIPTION_ENGINES.items()
+        eng = next((label for label, c in config.TRANSCRIPTION_ENGINES.items()
                     if c == config.TRANSCRIPTION_ENGINE), "")
         if eng:
             self.engine_option.set(eng)

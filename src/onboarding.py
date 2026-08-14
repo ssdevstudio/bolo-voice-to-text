@@ -11,7 +11,7 @@ Shown only when config.ONBOARDING_COMPLETED is False. Sets the flag on
 """
 
 import customtkinter as ctk
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 from . import config
 

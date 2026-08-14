@@ -47,7 +47,7 @@ class TrayIcon:
             lang_menu.append(pystray.MenuItem(
                 label,
                 self._make_lang_setter(label, code),
-                checked=lambda item, l=label: self.current_lang_label == l
+                checked=lambda item, it=label: self.current_lang_label == it
             ))
 
         return pystray.Menu(

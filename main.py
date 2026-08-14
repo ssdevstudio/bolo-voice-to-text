@@ -10,7 +10,6 @@ from typing import Any, Callable, Optional
 
 if sys.platform == "win32":
     try:
-        import codecs
         sys.stdout.reconfigure(encoding='utf-8')
     except Exception:
         pass
@@ -21,7 +20,7 @@ from src.injector import TextInjector
 from src.hotkey_monitor import HotkeyMonitor
 from src.tray_icon import TrayIcon
 from src.gui import start_gui
-from src.utils import setup_logging, get_logger, purge_old_history
+from src.utils import setup_logging, purge_old_history
 from src.onboarding import maybe_show as maybe_show_onboarding
 
 # ─── Structured Logging Setup ───────────────────────────────────────────────
@@ -299,13 +298,13 @@ class BoloApp:
         try:
             # Signal audio engine to stop background listener and kill stream
             self.audio_engine._stop_engine_event.set()  # Signal bg listener to stop
-            
+
             # Wait for background listener thread to finish (with timeout)
             if self.audio_engine._bg_listener_thread and self.audio_engine._bg_listener_thread.is_alive():
                 self.audio_engine._bg_listener_thread.join(timeout=2.0)
                 if self.audio_engine._bg_listener_thread.is_alive():
                     print("[Audio] Background listener thread did not stop gracefully")
-            
+
             # Now kill the stream
             self.audio_engine.kill_stream()
         except Exception as e:
