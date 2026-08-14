@@ -582,9 +582,10 @@ class BildGUI(ctk.CTk):
 
     def _show_hotkey_error(self, invalid_choice):
         """Show error message when hotkey validation fails."""
-        error_msg = f"Invalid hotkey: '{invalid_choice}'\n\nValid hotkeys:\nleft alt, right alt, ctrl, shift, space"
+        valid_list = ", ".join(sorted(config.VALID_HOTKEYS))
+        msg = f"Invalid hotkey: '{invalid_choice}' — valid: {valid_list}"
         # Update status label with error
-        self.status_lbl.configure(text=f"Invalid hotkey: {invalid_choice}", text_color=ERROR)
+        self.status_lbl.configure(text=msg, text_color=ERROR)
         # Schedule status reset after 3 seconds
         self.after(3000, lambda: self.status_lbl.configure(
             text="Ready to transcribe", text_color=TXT))
