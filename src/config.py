@@ -65,8 +65,8 @@ VERSION = "1.2.0"
 
 # --- DEFAULTS ---
 _DEFAULTS = {
-    "ACTIVATION_KEY": 'left alt',
-    "LONG_PRESS_THRESHOLD": 0.15,
+    "ACTIVATION_KEY": 'right alt',
+    "LONG_PRESS_THRESHOLD": 0.5,
     "DEFAULT_LANGUAGE": 'en-IN',
     "TRANSCRIPTION_ENGINE": 'google',
     "WHISPER_MODEL": 'large-v3-turbo',

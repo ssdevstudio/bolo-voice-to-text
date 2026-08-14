@@ -11,7 +11,7 @@ class HotkeyMonitor:
     Hotkey monitor for Bolo voice-to-text activation.
 
     Monitors keyboard events and triggers callbacks when the activation key
-    is held for LONG_PRESS_THRESHOLD seconds (default: 0.15s).
+    is held for LONG_PRESS_THRESHOLD seconds (default: 0.5s).
 
     Responsibilities:
         - Keyboard hook via python-keyboard library
