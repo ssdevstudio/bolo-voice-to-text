@@ -1,6 +1,7 @@
 import ctypes
 import sys
 import time
+from typing import Optional
 
 
 class _ClipboardBackup:
@@ -14,7 +15,7 @@ class _ClipboardBackup:
         self._formats = []
         self._data = {}
 
-    def save(self):
+    def save(self) -> None:
         """Enumerate and capture all clipboard formats."""
         try:
             import win32clipboard as wc
@@ -37,7 +38,7 @@ class _ClipboardBackup:
         except Exception as e:
             print(f"[Injector] Clipboard backup err: {e}")
 
-    def restore(self):
+    def restore(self) -> None:
         """Restore all captured formats if clipboard still contains our text."""
         if not self._formats:
             return
@@ -86,7 +87,7 @@ class TextInjector:
     """
 
     @staticmethod
-    def _restore_focus(hwnd):
+    def _restore_focus(hwnd: Optional[int]) -> None:
         """Forcefully restores focus to the target window."""
         if not hwnd:
             return
@@ -102,7 +103,7 @@ class TextInjector:
             print(f"Focus restore error: {e}")
 
     @staticmethod
-    def inject(text, target_hwnd=None):
+    def inject(text: str, target_hwnd: Optional[int] = None) -> None:
         """
         Hybrid Injection Engine:
         1. Paste Hack: for long text/paragraphs (fastest, preserves formatting)
@@ -150,7 +151,7 @@ class TextInjector:
                 pass
 
     @staticmethod
-    def play_beep(frequency, duration):
+    def play_beep(frequency: int, duration: int) -> None:
         if sys.platform != "win32":
             return
         try:
