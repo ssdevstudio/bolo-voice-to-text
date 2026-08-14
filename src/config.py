@@ -108,6 +108,27 @@ VALID_HOTKEYS = {
     'enter', 'tab', 'space', 'backspace', 'escape', 'delete',
 }
 
+# --- RANGE VALIDATORS (for numeric settings — guards against corrupted config) ---
+_SETTING_RANGES = {
+    "LONG_PRESS_THRESHOLD": (0.1, 2.0),       # 100ms – 2000ms (FR-001-06)
+    "PRE_ROLL_SECONDS": (0.0, 2.0),           # 0s – 2s pre-roll
+    "POST_ROLL_SECONDS": (0.0, 2.0),          # 0s – 2s post-roll
+    "SILENCE_PADDING_MS": (0, 1000),          # 0ms – 1s padding
+    "ENERGY_THRESHOLD": (1, 100000),          # mic sensitivity floor
+    "SAMPLE_RATE": (8000, 48000),             # standard speech rates
+    "CHANNELS": (1, 2),                       # mono or stereo only
+    "CHUNK_SIZE": (128, 8192),                # must divide sample rate cleanly-ish
+    "HPF_CUTOFF": (50, 500),                  # 50Hz – 500Hz high-pass
+    "NORMALIZATION_RMS": (0.01, 1.0),         # 1% – 100% of full scale
+    "DIGITAL_GAIN": (1.0, 5.0),               # 0dB – ~14dB boost
+    "NO_SPEECH_THRESHOLD": (0.1, 1.0),
+    "LOG_PROB_THRESHOLD": (-20.0, 0.0),
+    "MIN_AUDIO_DURATION": (0.5, 30.0),
+    "VAD_THRESHOLD": (0.001, 0.1),
+    "STATUS_BAR_TIMEOUT": (0.5, 10.0),
+}
+
+
 # --- TYPE VALIDATORS (for settings validation) ---
 _SETTING_TYPES = {
     "ACTIVATION_KEY": str,
@@ -246,6 +267,14 @@ def _load_settings() -> None:
                 print(f"[Config] Type mismatch for '{key}': expected {expected}, got {type(value).__name__}. Using default.")
                 continue
 
+        # Range check for numeric settings — guards against corrupted config
+        rng = _SETTING_RANGES.get(key)
+        if rng is not None:
+            lo, hi = rng
+            if isinstance(value, bool) or value < lo or value > hi:
+                print(f"[Config] '{key}'={value!r} out of range [{lo}, {hi}]. Using default '{default}'")
+                continue
+
         globals()[key] = value
 
 _load_settings()
@@ -268,6 +297,14 @@ def save_setting(key: str, value: Any) -> bool:
     if key == "ACTIVATION_KEY":
         if not isinstance(value, str) or value.lower() not in VALID_HOTKEYS:
             print(f"[Config] Error: Invalid hotkey '{value}'. Valid: {', '.join(sorted(VALID_HOTKEYS))}")
+            return False
+
+    # Range validation for numeric settings
+    rng = _SETTING_RANGES.get(key)
+    if rng is not None:
+        lo, hi = rng
+        if isinstance(value, bool) or value < lo or value > hi:
+            print(f"[Config] Error: '{key}'={value!r} out of range [{lo}, {hi}].")
             return False
 
     try:
