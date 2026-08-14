@@ -3,14 +3,15 @@ import os
 import sys
 import tempfile
 import threading
+from typing import Any, Optional
 
 # Per-path in-process lock for atomic JSON IO. Single-instance enforcement
 # makes cross-process locking unnecessary.
-_FILE_LOCKS = {}
+_FILE_LOCKS: dict[str, threading.RLock] = {}
 _FILE_LOCKS_GUARD = threading.Lock()
 
 
-def _lock_for(path):
+def _lock_for(path: str) -> threading.RLock:
     """Return the RLock for this path (reentrant so read+write nesting works)."""
     with _FILE_LOCKS_GUARD:
         lock = _FILE_LOCKS.get(path)
@@ -20,7 +21,7 @@ def _lock_for(path):
         return lock
 
 
-def atomic_json_read(path, default=None):
+def atomic_json_read(path: str, default: Optional[Any] = None) -> Any:
     """Read a JSON file under per-path lock. Returns default if file missing/invalid."""
     with _lock_for(path):
         if not os.path.exists(path):
@@ -36,7 +37,7 @@ def atomic_json_read(path, default=None):
             return default
 
 
-def atomic_json_write(path, data):
+def atomic_json_write(path: str, data: Any) -> bool:
     """Write JSON atomically (tmp file + rename) under per-path lock.
 
     Atomic on the same filesystem — rename() is the standard durability trick.
@@ -173,12 +174,12 @@ HISTORY_FILE = "history.json"
 _ALLOWED_SETTINGS = set(_DEFAULTS.keys())
 
 
-def _is_frozen():
+def _is_frozen() -> bool:
     """Detect PyInstaller / cx_Freeze frozen executable."""
     return getattr(sys, 'frozen', False)
 
 
-def _get_user_data_dir():
+def _get_user_data_dir() -> str:
     """OS-appropriate writable data directory for Bolo user state.
 
     Frozen exe: %APPDATA%\\Bolo on Windows, ~/.config/bolo on Linux/macOS.
@@ -199,25 +200,25 @@ def _get_user_data_dir():
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def _get_app_root():
+def _get_app_root() -> str:
     """Source-tree root (read-only resources only — icons, bundled models)."""
     if _is_frozen() and hasattr(sys, '_MEIPASS'):
         return sys._MEIPASS
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def _get_settings_path():
+def _get_settings_path() -> str:
     return os.path.join(_get_user_data_dir(), SETTINGS_FILE)
 
 
-def _get_history_path():
+def _get_history_path() -> str:
     return os.path.join(_get_user_data_dir(), HISTORY_FILE)
 
 
-def _get_lock_path():
+def _get_lock_path() -> str:
     return os.path.join(_get_user_data_dir(), ".bolo.lock")
 
-def _load_settings():
+def _load_settings() -> None:
     """Load settings from JSON, validating types and hotkey whitelist.
 
     Driven by _DEFAULTS — any key added there is auto-loaded here.
@@ -249,7 +250,7 @@ def _load_settings():
 
 _load_settings()
 
-def save_setting(key, value):
+def save_setting(key: str, value: Any) -> bool:
     """Validate then save a setting to disk atomically.
 
     Validation order: allowed key → type → hotkey whitelist → JSON serializable.
@@ -289,7 +290,7 @@ def save_setting(key, value):
         print(f"[Config] Saved setting '{key}' = {value}")
     return ok
 
-def reset_settings():
+def reset_settings() -> None:
     for key, val in _DEFAULTS.items():
         if key in _ALLOWED_SETTINGS:
             globals()[key] = val
