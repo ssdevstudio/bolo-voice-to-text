@@ -21,7 +21,7 @@ from src.injector import TextInjector
 from src.hotkey_monitor import HotkeyMonitor
 from src.tray_icon import TrayIcon
 from src.gui import start_gui
-from src.utils import setup_logging, get_logger
+from src.utils import setup_logging, get_logger, purge_old_history
 from src.onboarding import maybe_show as maybe_show_onboarding
 
 # ─── Structured Logging Setup ───────────────────────────────────────────────
@@ -271,6 +271,14 @@ class BoloApp:
             self.gui.after(1000, self._prewarm_model)
         except Exception as e:
             print(f"[Main] Prewarm schedule failed: {e}")
+        # Periodic audio-engine health check — restarts the bg listener if it
+        # died silently (e.g. device unplugged). check_health() was defined
+        # but never wired in; without this, a dead listener leaves recordings
+        # silent with no auto-recovery.
+        try:
+            self.gui.after(10000, self._health_tick)
+        except Exception as e:
+            print(f"[Main] Health tick schedule failed: {e}")
         try:
             self.gui.mainloop()
         except KeyboardInterrupt:
@@ -358,6 +366,26 @@ class BoloApp:
 
         threading.Thread(target=_warm, daemon=True).start()
 
+    def _health_tick(self) -> None:
+        """Periodic audio-engine liveness check, self-rescheduling every 10s.
+
+        Restarts the background listener if it died silently. Stops rescheduling
+        once the app is quitting.
+        """
+        if self._quitting:
+            return
+        try:
+            self.audio_engine.check_health()
+        except Exception as e:
+            print(f"[Main] Health tick error: {e}")
+        # Reschedule only while still running (self.gui.after would otherwise
+        # keep a dangling timer after the window is destroyed).
+        if not self._quitting:
+            try:
+                self.gui.after(10000, self._health_tick)
+            except Exception:
+                pass
+
 
 if __name__ == "__main__":
     # ─── CLI Argument Parsing ──────────────────────────────────────────────
@@ -390,6 +418,13 @@ Examples:
 
     _kill_existing_instances()  # Purana band karo
     _write_lock()               # Apna PID likho
+    # Trim history entries older than 7 days (function existed but was never
+    # wired in at startup — history.json grew unbounded despite MAX_HISTORY
+    # only capping per-session appends).
+    try:
+        purge_old_history()
+    except Exception as e:
+        _logger.warning(f"History purge skipped: {e}")
     try:
         app = BoloApp()
         app.run()

@@ -1,7 +1,15 @@
 import ctypes
 import sys
+import threading
 import time
 from typing import Optional
+
+# Serializes system-clipboard mutations. inject() can be entered concurrently by
+# two _process_and_inject threads (main.stop_recording overwrites
+# _processing_thread without joining the prior one), and pyperclip.copy / ctrl+v
+# / restore mutate the single global clipboard — without this, two injections
+# can cross-talk and paste the wrong text or clobber each other's backup.
+_CLIPBOARD_LOCK = threading.Lock()
 
 
 class _ClipboardBackup:
@@ -126,18 +134,21 @@ class TextInjector:
 
             if use_paste:
                 # PASTE STRATEGY — FULL-FORMAT BACKUP
-                # Save ALL clipboard formats (text, images, files) before modifying
-                backup = _ClipboardBackup()
-                backup.save()
+                # Save ALL clipboard formats (text, images, files) before modifying.
+                # Serialized via _CLIPBOARD_LOCK so concurrent injections don't
+                # cross-talk on the single global clipboard.
+                with _CLIPBOARD_LOCK:
+                    backup = _ClipboardBackup()
+                    backup.save()
 
-                # Modify clipboard and inject
-                pyperclip.copy(text)
-                time.sleep(0.05) # Let OS register clipboard change
-                keyboard.press_and_release('ctrl+v')
-                time.sleep(0.2) # Let paste operation complete
+                    # Modify clipboard and inject
+                    pyperclip.copy(text)
+                    time.sleep(0.05) # Let OS register clipboard change
+                    keyboard.press_and_release('ctrl+v')
+                    time.sleep(0.2) # Let paste operation complete
 
-                # Restore original clipboard (only if we still own it)
-                backup.restore()
+                    # Restore original clipboard (only if we still own it)
+                    backup.restore()
             else:
                 # DIRECT TYPE STRATEGY
                 keyboard.write(text, delay=0.01)

@@ -1253,8 +1253,8 @@ class AudioEngine:
             print(f"[Audio] Reconnection failed: {e}")
             return False
 
-    def check_health(self) -> None:
-        """Health check for the background listener."""
+    def check_health(self) -> bool:
+        """Health check for the background listener. Returns True if alive."""
         if self._bg_listener_thread and not self._bg_listener_thread.is_alive():
             print("[Audio] Background listener died. Restarting...")
             self._start_bg_listener()

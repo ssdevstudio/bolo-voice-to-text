@@ -593,9 +593,25 @@ class BildGUI(ctk.CTk):
             text="Ready to transcribe", text_color=TXT))
         print(f"[GUI] Hotkey validation failed for: {invalid_choice}")
 
+    def _flash_save_error(self, setting: str, switch: Optional[Any] = None, value: bool = False) -> None:
+        """Revert a toggle switch and flash a transient error if save_setting fails.
+
+        Without this, a disk/permissions failure leaves the switch flipped in
+        the UI while config stays at the old value — silent UI/config desync.
+        """
+        if switch is not None:
+            (switch.select if not value else switch.deselect)()
+        self.status_lbl.configure(
+            text=f"Couldn't save '{setting}' (disk write failed)", text_color=ERROR)
+        self.after(3000, lambda: self.status_lbl.configure(
+            text="Ready to transcribe", text_color=TXT))
+        print(f"[GUI] Save failed for {setting}")
+
     def toggle_beeps(self) -> None:
         v = bool(self.beep_switch.get())
-        config.save_setting("BEEP_ON_START", v); config.save_setting("BEEP_ON_END", v)
+        if config.save_setting("BEEP_ON_START", v) and config.save_setting("BEEP_ON_END", v):
+            return
+        self._flash_save_error("BEEP_ON_START", self.beep_switch, v)
 
     def change_engine(self, choice: str) -> None:
         code = config.TRANSCRIPTION_ENGINES[choice]
@@ -670,13 +686,19 @@ class BildGUI(ctk.CTk):
         except OSError: pass
 
     def toggle_startup(self) -> None:
-        v = self.startup_switch.get()
-        config.save_setting("RUN_ON_STARTUP", v); set_run_on_startup(config.APP_NAME, v)
+        v = bool(self.startup_switch.get())
+        saved = config.save_setting("RUN_ON_STARTUP", v)
+        if not set_run_on_startup(config.APP_NAME, v):
+            saved = False
+        if not saved:
+            self._flash_save_error("RUN_ON_STARTUP", self.startup_switch, v)
 
     def toggle_auto_energy(self) -> None:
         v = bool(self.auto_energy_switch.get())
-        config.save_setting("AUTO_ENERGY_THRESHOLD", v)
-        self.on_settings_change("auto_energy", v)
+        if config.save_setting("AUTO_ENERGY_THRESHOLD", v):
+            self.on_settings_change("auto_energy", v)
+        else:
+            self._flash_save_error("AUTO_ENERGY_THRESHOLD", self.auto_energy_switch, v)
 
     def change_pre_roll(self, choice: str) -> None:
         v = float(choice.replace("s", ""))
@@ -695,15 +717,18 @@ class BildGUI(ctk.CTk):
 
     def toggle_auto_punct(self) -> None:
         v = bool(self.auto_punct_switch.get())
-        config.save_setting("AUTO_PUNCTUATION", v)
+        if not config.save_setting("AUTO_PUNCTUATION", v):
+            self._flash_save_error("AUTO_PUNCTUATION", self.auto_punct_switch, v)
 
     def toggle_capitalize(self) -> None:
         v = bool(self.capitalize_switch.get())
-        config.save_setting("CAPITALIZE_FIRST", v)
+        if not config.save_setting("CAPITALIZE_FIRST", v):
+            self._flash_save_error("CAPITALIZE_FIRST", self.capitalize_switch, v)
 
     def toggle_spoken_commands(self) -> None:
         v = bool(self.spoken_cmd_switch.get())
-        config.save_setting("SPOKEN_COMMANDS", v)
+        if not config.save_setting("SPOKEN_COMMANDS", v):
+            self._flash_save_error("SPOKEN_COMMANDS", self.spoken_cmd_switch, v)
 
     def download_zero_stt(self) -> None:
         """Trigger zero-stt download via main app callback."""

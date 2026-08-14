@@ -25,3 +25,6 @@ jobs:
 
       - name: Run Hinglish cleanup regression tests
         run: python tests/test_hinglish_cleanup.py
+
+      - name: Run config validation regression tests
+        run: python tests/test_config_validation.py
