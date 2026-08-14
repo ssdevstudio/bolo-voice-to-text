@@ -1,9 +1,14 @@
+from __future__ import annotations
+
 import threading
 import time
+from typing import Callable, Optional
 
 import keyboard
 
 from . import config
+
+type HotkeyCallback = Callable[[Optional[int]], None]
 
 
 class HotkeyMonitor:
@@ -27,23 +32,23 @@ class HotkeyMonitor:
         - HWND captured immediately on KEY_DOWN (not on timer callback)
         - HWND passed to callbacks for accurate text injection
     """
-    def __init__(self, on_hold_start, on_hold_end):
+    def __init__(self, on_hold_start: HotkeyCallback, on_hold_end: HotkeyCallback):
         self.on_hold_start = on_hold_start
         self.on_hold_end = on_hold_end
-        self.is_held = False
-        self.press_time = 0
-        self.activation_key = config.ACTIVATION_KEY
-        self.threshold = config.LONG_PRESS_THRESHOLD
+        self.is_held: bool = False
+        self.press_time: float = 0
+        self.activation_key: str = config.ACTIVATION_KEY
+        self.threshold: float = config.LONG_PRESS_THRESHOLD
         self._lock = threading.Lock()
-        self._already_triggered = False
-        self._timer = None
-        self._hook_id = None
-        self._target_hwnd = None
+        self._already_triggered: bool = False
+        self._timer: Optional[threading.Timer] = None
+        self._hook_id: Optional[int] = None
+        self._target_hwnd: Optional[int] = None
 
-    def start(self):
+    def start(self) -> None:
         self._hook_id = keyboard.hook(self._on_event)
 
-    def update_key(self, new_key):
+    def update_key(self, new_key: str) -> bool:
         # CRITICAL: Validate hotkey before accepting it
         if not new_key or new_key.lower() not in config.VALID_HOTKEYS:
             print(f"[Hotkey] Error: Invalid hotkey '{new_key}'")
@@ -62,7 +67,7 @@ class HotkeyMonitor:
                 self._timer = None
         return True
 
-    def _is_match(self, key_name):
+    def _is_match(self, key_name: Optional[str]) -> bool:
         """Match a key event against the configured activation key.
 
         Windows quirk: on many keyboard layouts (Indian InScript, EU layouts
@@ -81,7 +86,7 @@ class HotkeyMonitor:
             return key == "alt gr"
         return key == target
 
-    def _get_active_window(self):
+    def _get_active_window(self) -> Optional[int]:
         """Native Win32 call to get current focus."""
         import ctypes
         try:
@@ -89,7 +94,7 @@ class HotkeyMonitor:
         except Exception:
             return None
 
-    def _on_event(self, event):
+    def _on_event(self, event: keyboard.KeyboardEvent) -> None:
         with self._lock:
             key_name = event.name if event.name else ""
 
@@ -122,13 +127,13 @@ class HotkeyMonitor:
                     self._already_triggered = False
                     self.on_hold_end(self._target_hwnd) # Pass target window back
 
-    def _on_long_press(self):
+    def _on_long_press(self) -> None:
         with self._lock:
             if self.is_held and not self._already_triggered:
                 self._already_triggered = True
                 self.on_hold_start(self._target_hwnd)  # Pass HWND captured at KEY_DOWN
 
-    def stop(self):
+    def stop(self) -> None:
         try:
             if self._hook_id is not None:
                 keyboard.unhook(self._hook_id)
