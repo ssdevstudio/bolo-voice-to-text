@@ -138,6 +138,11 @@ class BoloApp:
             print(f"Long-press threshold: {int(value * 1000)}ms")
         elif key == 'engine':
             print(f"Engine changed to: {value}")
+            # Invalidate cached models so they reload fresh on next transcription
+            # with the new engine. Zero-STT is only relevant for Whisper engine,
+            # so invalidate it unconditionally (it's lazy-loaded and cheap to skip).
+            self.audio_engine.reload_whisper_model()
+            self.audio_engine.reload_zero_stt_model()
         elif key == 'model':
             print(f"Model changed to: {value}")
             self.audio_engine.reload_whisper_model()
